@@ -1,0 +1,55 @@
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+index 360f36a80..124fcd528 100644
+--- a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
++++ b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+@@ -16,6 +16,7 @@
+  */
+ package org.apache.commons.collections4;
+ 
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
+@@ -81,6 +82,42 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+         assertEquals(0, stack.size(), "Stack size is zero");
+     }
+ 
++    @Test
++    void testUserWorkflowFromPushToDrain() {
++        final ArrayStack<String> stack = new ArrayStack<>(4);
++
++        assertTrue(stack.empty(), "Workflow starts with an empty stack");
++
++        stack.push("browse");
++        stack.push(null);
++        stack.push("checkout");
++        stack.push("pay");
++
++        assertEquals("pay", stack.peek(), "Latest user action stays on top");
++        assertEquals("checkout", stack.peek(1), "Can inspect a previous action without removing it");
++        assertEquals(1, stack.search("pay"), "Top action is one step away");
++        assertEquals(2, stack.search("checkout"), "Previous action is two steps away");
++        assertEquals(3, stack.search(null), "Null actions participate in stack searches");
++        assertEquals(4, stack.search("browse"), "Earliest action is deepest in the stack");
++
++        final Object[] snapshot = stack.toArray();
++        assertArrayEquals(new Object[] { "browse", null, "checkout", "pay" }, snapshot,
++                "Stack snapshot keeps bottom-up iteration order");
++        assertTrue(ArrayUtils.contains(snapshot, null), "Snapshot still exposes null entries");
++        assertEquals(0, ArrayUtils.indexOf(snapshot, "browse"), "Snapshot keeps the first action at index zero");
++        assertEquals(3, ArrayUtils.indexOf(snapshot, "pay"), "Snapshot keeps the latest action at the end");
++        assertEquals(CollectionUtils.INDEX_NOT_FOUND, ArrayUtils.indexOf(snapshot, "refund"),
++                "Snapshot lookup reports missing actions consistently");
++
++        assertEquals("pay", stack.pop(), "Workflow drains in reverse order");
++        assertEquals("checkout", stack.pop(), "Second latest action comes next");
++        assertEquals(null, stack.pop(), "Null values can be popped like regular entries");
++        assertEquals("browse", stack.pop(), "Earliest action is removed last");
++        assertTrue(stack.empty(), "Workflow ends with an empty stack");
++        assertThrows(EmptyStackException.class, stack::peek, "Cannot inspect an empty workflow");
++        assertThrows(EmptyStackException.class, stack::pop, "Cannot pop from an empty workflow");
++    }
++
+     @Test
+     @Override
+     @SuppressWarnings("unchecked")
