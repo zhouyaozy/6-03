@@ -1,0 +1,75 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..e5887eb51 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -87,11 +87,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E peek() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(n - 1);
++        return getFromTop(0);
+     }
+ 
+     /**
+@@ -104,11 +100,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *  stack to satisfy this request
+      */
+     public E peek(final int n) throws EmptyStackException {
+-        final int m = size() - n - 1;
+-        if (m < 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(m);
++        return getFromTop(n);
+     }
+ 
+     /**
+@@ -118,11 +110,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E pop() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return remove(n - 1);
++        return remove(getIndexFromTop(0));
+     }
+ 
+     /**
+@@ -149,18 +137,20 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the 1-based depth into the stack of the object, or -1 if not found
+      */
+     public int search(final Object object) {
+-        int i = size() - 1;        // Current index
+-        int n = 1;                 // Current distance
+-        while (i >= 0) {
+-            final Object current = get(i);
+-            if (object == null && current == null ||
+-                object != null && object.equals(current)) {
+-                return n;
+-            }
+-            i--;
+-            n++;
++        final int index = lastIndexOf(object);
++        return index >= 0 ? size() - index : -1;
++    }
++
++    private E getFromTop(final int n) {
++        return get(getIndexFromTop(n));
++    }
++
++    private int getIndexFromTop(final int n) {
++        final int index = size() - n - 1;
++        if (index < 0) {
++            throw new EmptyStackException();
+         }
+-        return -1;
++        return index;
+     }
+ 
+ }
