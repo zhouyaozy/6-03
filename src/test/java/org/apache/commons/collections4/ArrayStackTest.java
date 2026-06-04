@@ -95,6 +95,13 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
                 "Next Item is 'First Item'");
         assertEquals(-1, stack.search("Missing Item"),
                 "Cannot find 'Missing Item'");
+
+        stack.push(null);
+        stack.push((E) "First Item");
+        assertEquals(1, stack.search("First Item"),
+                "Nearest matching item is returned first");
+        assertEquals(2, stack.search(null),
+                "Null values are searched from the top of the stack");
     }
 
 //    void testCreate() throws Exception {

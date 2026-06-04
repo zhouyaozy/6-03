@@ -1,0 +1,188 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..ee1887086 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -87,11 +87,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E peek() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(n - 1);
++        return get(indexFromTop(0));
+     }
+ 
+     /**
+@@ -104,11 +100,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *  stack to satisfy this request
+      */
+     public E peek(final int n) throws EmptyStackException {
+-        final int m = size() - n - 1;
+-        if (m < 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(m);
++        return get(indexFromTop(n));
+     }
+ 
+     /**
+@@ -118,11 +110,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E pop() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return remove(n - 1);
++        return remove(indexFromTop(0));
+     }
+ 
+     /**
+@@ -149,18 +137,16 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the 1-based depth into the stack of the object, or -1 if not found
+      */
+     public int search(final Object object) {
+-        int i = size() - 1;        // Current index
+-        int n = 1;                 // Current distance
+-        while (i >= 0) {
+-            final Object current = get(i);
+-            if (object == null && current == null ||
+-                object != null && object.equals(current)) {
+-                return n;
+-            }
+-            i--;
+-            n++;
++        final int index = ArrayUtils.lastIndexOf(this, object);
++        return index == CollectionUtils.INDEX_NOT_FOUND ? CollectionUtils.INDEX_NOT_FOUND : size() - index;
++    }
++
++    private int indexFromTop(final int offset) {
++        final int index = size() - offset - 1;
++        if (index < 0) {
++            throw new EmptyStackException();
+         }
+-        return -1;
++        return index;
+     }
+ 
+ }
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayUtils.java b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+index 8fdbab144..573da3224 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayUtils.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+@@ -17,6 +17,9 @@
+ 
+ package org.apache.commons.collections4;
+ 
++import java.util.List;
++import java.util.Objects;
++
+ /**
+  * <p>
+  * Operations on arrays, primitive arrays (like {@code int[]}) and primitive wrapper arrays (like {@code Integer[]}).
+@@ -69,24 +72,13 @@ final class ArrayUtils {
+      * @return the index of the object within the array starting at the index, {@link CollectionUtils#INDEX_NOT_FOUND} ({@code -1}) if not found or {@code null}
+      *         array input.
+      */
+-    static int indexOf(final Object[] array, final Object objectToFind, int startIndex) {
++    static int indexOf(final Object[] array, final Object objectToFind, final int startIndex) {
+         if (array == null) {
+             return CollectionUtils.INDEX_NOT_FOUND;
+         }
+-        if (startIndex < 0) {
+-            startIndex = 0;
+-        }
+-        if (objectToFind == null) {
+-            for (int i = startIndex; i < array.length; i++) {
+-                if (array[i] == null) {
+-                    return i;
+-                }
+-            }
+-        } else {
+-            for (int i = startIndex; i < array.length; i++) {
+-                if (objectToFind.equals(array[i])) {
+-                    return i;
+-                }
++        for (int i = Math.max(0, startIndex); i < array.length; i++) {
++            if (Objects.equals(objectToFind, array[i])) {
++                return i;
+             }
+         }
+         return CollectionUtils.INDEX_NOT_FOUND;
+@@ -108,6 +100,25 @@ final class ArrayUtils {
+         return indexOf(array, objectToFind, 0);
+     }
+ 
++    static int lastIndexOf(final List<?> list, final Object objectToFind) {
++        return lastIndexOf(list, objectToFind, list == null ? CollectionUtils.INDEX_NOT_FOUND : list.size() - 1);
++    }
++
++    static int lastIndexOf(final List<?> list, final Object objectToFind, int startIndex) {
++        if (list == null || startIndex < 0) {
++            return CollectionUtils.INDEX_NOT_FOUND;
++        }
++        if (startIndex >= list.size()) {
++            startIndex = list.size() - 1;
++        }
++        for (int i = startIndex; i >= 0; i--) {
++            if (Objects.equals(objectToFind, list.get(i))) {
++                return i;
++            }
++        }
++        return CollectionUtils.INDEX_NOT_FOUND;
++    }
++
+     /**
+      * Don't allow instances.
+      */
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+index 360f36a80..d15fb62b9 100644
+--- a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
++++ b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+@@ -95,6 +95,13 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+                 "Next Item is 'First Item'");
+         assertEquals(-1, stack.search("Missing Item"),
+                 "Cannot find 'Missing Item'");
++
++        stack.push(null);
++        stack.push((E) "First Item");
++        assertEquals(1, stack.search("First Item"),
++                "Nearest matching item is returned first");
++        assertEquals(2, stack.search(null),
++                "Null values are searched from the top of the stack");
+     }
+ 
+ //    void testCreate() throws Exception {
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java b/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
+index 16a88c993..ae980d26a 100644
+--- a/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
++++ b/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
+@@ -20,6 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
++import java.util.Arrays;
++import java.util.List;
++
+ import org.junit.jupiter.api.Test;
+ 
+ class ArrayUtilsTest {
+@@ -70,4 +73,15 @@ class ArrayUtilsTest {
+         assertEquals(4, ArrayUtils.indexOf(array, null));
+         assertEquals(-1, ArrayUtils.indexOf(array, "notInArray"));
+     }
++
++    @Test
++    void testLastIndexOf() {
++        final List<Object> list = Arrays.asList("0", "1", "2", "0", null);
++        assertEquals(-1, ArrayUtils.lastIndexOf(null, null));
++        assertEquals(3, ArrayUtils.lastIndexOf(list, "0"));
++        assertEquals(0, ArrayUtils.lastIndexOf(list, "0", 2));
++        assertEquals(4, ArrayUtils.lastIndexOf(list, null));
++        assertEquals(-1, ArrayUtils.lastIndexOf(list, "notInList"));
++        assertEquals(-1, ArrayUtils.lastIndexOf(list, "0", -1));
++    }
+ }

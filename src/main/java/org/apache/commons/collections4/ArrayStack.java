@@ -87,11 +87,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return get(n - 1);
+        return get(indexFromTop(0));
     }
 
     /**
@@ -104,11 +100,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
-        final int m = size() - n - 1;
-        if (m < 0) {
-            throw new EmptyStackException();
-        }
-        return get(m);
+        return get(indexFromTop(n));
     }
 
     /**
@@ -118,11 +110,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return remove(n - 1);
+        return remove(indexFromTop(0));
     }
 
     /**
@@ -149,18 +137,16 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
-        while (i >= 0) {
-            final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
-                return n;
-            }
-            i--;
-            n++;
+        final int index = ArrayUtils.lastIndexOf(this, object);
+        return index == CollectionUtils.INDEX_NOT_FOUND ? CollectionUtils.INDEX_NOT_FOUND : size() - index;
+    }
+
+    private int indexFromTop(final int offset) {
+        final int index = size() - offset - 1;
+        if (index < 0) {
+            throw new EmptyStackException();
         }
-        return -1;
+        return index;
     }
 
 }

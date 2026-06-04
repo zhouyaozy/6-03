@@ -17,6 +17,9 @@
 
 package org.apache.commons.collections4;
 
+import java.util.List;
+import java.util.Objects;
+
 /**
  * <p>
  * Operations on arrays, primitive arrays (like {@code int[]}) and primitive wrapper arrays (like {@code Integer[]}).
@@ -69,24 +72,13 @@ final class ArrayUtils {
      * @return the index of the object within the array starting at the index, {@link CollectionUtils#INDEX_NOT_FOUND} ({@code -1}) if not found or {@code null}
      *         array input.
      */
-    static int indexOf(final Object[] array, final Object objectToFind, int startIndex) {
+    static int indexOf(final Object[] array, final Object objectToFind, final int startIndex) {
         if (array == null) {
             return CollectionUtils.INDEX_NOT_FOUND;
         }
-        if (startIndex < 0) {
-            startIndex = 0;
-        }
-        if (objectToFind == null) {
-            for (int i = startIndex; i < array.length; i++) {
-                if (array[i] == null) {
-                    return i;
-                }
-            }
-        } else {
-            for (int i = startIndex; i < array.length; i++) {
-                if (objectToFind.equals(array[i])) {
-                    return i;
-                }
+        for (int i = Math.max(0, startIndex); i < array.length; i++) {
+            if (Objects.equals(objectToFind, array[i])) {
+                return i;
             }
         }
         return CollectionUtils.INDEX_NOT_FOUND;
@@ -106,6 +98,25 @@ final class ArrayUtils {
      */
     static <T> int indexOf(final T[] array, final Object objectToFind) {
         return indexOf(array, objectToFind, 0);
+    }
+
+    static int lastIndexOf(final List<?> list, final Object objectToFind) {
+        return lastIndexOf(list, objectToFind, list == null ? CollectionUtils.INDEX_NOT_FOUND : list.size() - 1);
+    }
+
+    static int lastIndexOf(final List<?> list, final Object objectToFind, int startIndex) {
+        if (list == null || startIndex < 0) {
+            return CollectionUtils.INDEX_NOT_FOUND;
+        }
+        if (startIndex >= list.size()) {
+            startIndex = list.size() - 1;
+        }
+        for (int i = startIndex; i >= 0; i--) {
+            if (Objects.equals(objectToFind, list.get(i))) {
+                return i;
+            }
+        }
+        return CollectionUtils.INDEX_NOT_FOUND;
     }
 
     /**

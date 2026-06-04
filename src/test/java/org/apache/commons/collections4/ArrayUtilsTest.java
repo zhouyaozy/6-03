@@ -20,6 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Arrays;
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 class ArrayUtilsTest {
@@ -69,5 +72,16 @@ class ArrayUtilsTest {
         assertEquals(3, ArrayUtils.indexOf(array, "3"));
         assertEquals(4, ArrayUtils.indexOf(array, null));
         assertEquals(-1, ArrayUtils.indexOf(array, "notInArray"));
+    }
+
+    @Test
+    void testLastIndexOf() {
+        final List<Object> list = Arrays.asList("0", "1", "2", "0", null);
+        assertEquals(-1, ArrayUtils.lastIndexOf(null, null));
+        assertEquals(3, ArrayUtils.lastIndexOf(list, "0"));
+        assertEquals(0, ArrayUtils.lastIndexOf(list, "0", 2));
+        assertEquals(4, ArrayUtils.lastIndexOf(list, null));
+        assertEquals(-1, ArrayUtils.lastIndexOf(list, "notInList"));
+        assertEquals(-1, ArrayUtils.lastIndexOf(list, "0", -1));
     }
 }
