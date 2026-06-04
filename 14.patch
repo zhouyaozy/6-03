@@ -1,0 +1,167 @@
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+index 360f36a80..570f49a8f 100644
+--- a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
++++ b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+@@ -97,6 +97,162 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+                 "Cannot find 'Missing Item'");
+     }
+ 
++@Test
++    @SuppressWarnings("unchecked")
++    void testBrowserNavigationWorkflow() {
++        final ArrayStack<String> history = new ArrayStack<>();
++        assertTrue(history.empty(), "History starts empty");
++
++        history.push("Homepage");
++        assertEquals("Homepage", history.peek(), "Current page is Homepage");
++
++        history.push("Products");
++        history.push("Product Detail #42");
++        assertEquals("Product Detail #42", history.peek(), "Current page is Product Detail #42");
++        assertEquals(3, history.size(), "Three pages visited");
++
++        String back1 = history.pop();
++        assertEquals("Product Detail #42", back1, "Back to Product Detail");
++        assertEquals("Products", history.peek(), "Current is Products");
++
++        String back2 = history.pop();
++        assertEquals("Products", back2, "Back to Products");
++        assertEquals("Homepage", history.peek(), "Current is Homepage");
++
++        history.push("About Us");
++        assertEquals("About Us", history.peek(), "Navigated to About Us");
++        assertEquals(2, history.size(), "Two pages in history");
++
++        String back3 = history.pop();
++        String back4 = history.pop();
++        assertEquals("About Us", back3);
++        assertEquals("Homepage", back4);
++        assertTrue(history.empty(), "History empty after going back to start");
++    }
++
++    @Test
++    @SuppressWarnings("unchecked")
++    void testUndoRedoWorkflow() {
++        final ArrayStack<String> undoStack = new ArrayStack<>();
++        final ArrayStack<String> redoStack = new ArrayStack<>();
++
++        undoStack.push("insert 'hello'");
++        undoStack.push("insert ' world'");
++        undoStack.push("delete 'world'");
++        assertEquals(3, undoStack.size(), "Three actions recorded");
++
++        String undo1 = undoStack.pop();
++        redoStack.push(undo1);
++        assertEquals("delete 'world'", undo1, "Undo: delete 'world'");
++
++        String undo2 = undoStack.pop();
++        redoStack.push(undo2);
++        assertEquals("insert ' world'", undo2, "Undo: insert ' world'");
++
++        assertEquals(1, undoStack.size(), "One action left in undo stack");
++        assertEquals(2, redoStack.size(), "Two actions in redo stack");
++
++        String redo1 = redoStack.pop();
++        undoStack.push(redo1);
++        assertEquals("insert ' world'", undoStack.peek(), "Redo applied");
++
++        String redo2 = redoStack.pop();
++        undoStack.push(redo2);
++        assertEquals("delete 'world'", undoStack.peek(), "Second redo applied");
++
++        assertTrue(redoStack.empty(), "Redo stack exhausted");
++        assertEquals(3, undoStack.size(), "All three actions restored in undo stack");
++    }
++
++    @Test
++    void testNullElementWorkflow() {
++        final ArrayStack<String> stack = new ArrayStack<>();
++
++        stack.push("first");
++        stack.push(null);
++        stack.push("third");
++
++        assertEquals(3, stack.size(), "Stack has three elements");
++        assertTrue(stack.search(null) > 0, "Null element is found via search");
++
++        assertEquals("third", stack.pop(), "Pop top non-null");
++        assertTrue(stack.peek() == null, "Peek returns null without exception");
++        assertEquals(2, stack.size(), "Two elements remain");
++
++        stack.push("fourth");
++        assertEquals(1, stack.search(null), "Null is 1-based distance 1 from top");
++
++        String popped = stack.pop();
++        assertEquals("fourth", popped, "Popped fourth");
++        assertEquals(null, stack.pop(), "Popped null element");
++    }
++
++    @Test
++    @SuppressWarnings("unchecked")
++    void testMixedOperationsWorkflow() {
++        final ArrayStack<Integer> stack = new ArrayStack<>(5);
++
++        stack.push(10);
++        stack.push(20);
++        stack.push(30);
++        stack.push(40);
++        stack.push(50);
++
++        assertFalse(stack.empty(), "Stack is not empty");
++        assertEquals(5, stack.size(), "Five elements pushed");
++
++        assertEquals(Integer.valueOf(50), stack.peek(), "Top is 50");
++        assertEquals(Integer.valueOf(20), stack.peek(3), "peek(3) returns 20 (50->40->30->20)");
++
++        assertEquals(1, stack.search(50), "50 is at distance 1 from top");
++        assertEquals(3, stack.search(30), "30 is at distance 3 from top");
++        assertEquals(5, stack.search(10), "10 is at distance 5 from top");
++        assertEquals(-1, stack.search(99), "99 is not in stack");
++
++        assertEquals(Integer.valueOf(50), stack.pop());
++        assertEquals(Integer.valueOf(40), stack.pop());
++        assertEquals(3, stack.size(), "Three elements remain");
++
++        stack.push(60);
++        assertEquals(Integer.valueOf(60), stack.peek(), "Top is now 60");
++        assertEquals(4, stack.size());
++
++        assertEquals(-1, stack.search(50), "50 no longer in stack after pop");
++        assertEquals(1, stack.search(60), "60 is at top");
++
++        while (!stack.empty()) {
++            stack.pop();
++        }
++        assertTrue(stack.empty(), "All elements cleared");
++    }
++
++    @Test
++    @SuppressWarnings("unchecked")
++    void testSearchWorkflow() {
++        final ArrayStack<String> stack = new ArrayStack<>();
++
++        stack.push("alpha");
++        stack.push("beta");
++        stack.push("gamma");
++        stack.push("beta");
++
++        assertEquals(1, stack.search("beta"), "First 'beta' from top is at distance 1");
++        assertEquals(3, stack.search("alpha"), "alpha is at distance 3");
++
++        stack.pop();
++        assertEquals(3, stack.search("beta"), "After pop, remaining 'beta' at distance 3");
++
++        stack.pop();
++        assertEquals(1, stack.search("beta"), "After another pop, 'beta' at distance 1");
++
++        stack.pop();
++        assertEquals(-1, stack.search("beta"), "No 'beta' left");
++        assertEquals(1, stack.search("alpha"), "alpha is at distance 1");
++
++        stack.pop();
++        assertEquals(-1, stack.search("alpha"), "No elements left");
++    }
++
+ //    void testCreate() throws Exception {
+ //        resetEmpty();
+ //        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.emptyCollection.version4.obj");
