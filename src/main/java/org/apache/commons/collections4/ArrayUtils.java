@@ -109,6 +109,158 @@ final class ArrayUtils {
     }
 
     /**
+     * <p>
+     * Converts the given array to a stack (ArrayStack) with resilience disabled.
+     * Elements are pushed onto the stack in array order, so the last array element
+     * will be at the top of the stack.
+     * </p>
+     *
+     * @param <E>    the type of elements in the array
+     * @param array  the array to convert, may be {@code null}
+     * @return a new ArrayStack containing all array elements, or an empty stack if the array is null
+     * @since 4.6
+     */
+    static <E> ArrayStack<E> toArrayStack(final E[] array) {
+        final ArrayStack<E> stack = new ArrayStack<>();
+        if (array != null) {
+            for (final E element : array) {
+                stack.push(element);
+            }
+        }
+        return stack;
+    }
+
+    /**
+     * <p>
+     * Converts the given array to a stack (ArrayStack) with rate limiting enabled.
+     * Elements are pushed onto the stack in array order.
+     * </p>
+     *
+     * @param <E>          the type of elements in the array
+     * @param array        the array to convert, may be {@code null}
+     * @param maxPermits   the maximum number of operations allowed per window
+     * @param windowMillis the window duration in milliseconds
+     * @return a new ArrayStack with rate limiting and all array elements
+     * @since 4.6
+     */
+    static <E> ArrayStack<E> toArrayStackWithRateLimiting(final E[] array,
+                                                           final long maxPermits,
+                                                           final long windowMillis) {
+        final ArrayStack<E> stack = ArrayStacks.withRateLimiting(maxPermits, windowMillis);
+        if (array != null) {
+            for (final E element : array) {
+                stack.push(element);
+            }
+        }
+        return stack;
+    }
+
+    /**
+     * <p>
+     * Converts the given array to a stack (ArrayStack) with circuit breaker enabled.
+     * Elements are pushed onto the stack in array order.
+     * </p>
+     *
+     * @param <E>                    the type of elements in the array
+     * @param array                  the array to convert, may be {@code null}
+     * @param failureThreshold       the number of failures before opening the circuit
+     * @param monitoringWindowMillis the monitoring window duration
+     * @param cooldownMillis         the cooldown duration before trying half-open
+     * @return a new ArrayStack with circuit breaker and all array elements
+     * @since 4.6
+     */
+    static <E> ArrayStack<E> toArrayStackWithCircuitBreaker(final E[] array,
+                                                             final int failureThreshold,
+                                                             final long monitoringWindowMillis,
+                                                             final long cooldownMillis) {
+        final ArrayStack<E> stack = ArrayStacks.withCircuitBreaker(
+            failureThreshold, monitoringWindowMillis, cooldownMillis);
+        if (array != null) {
+            for (final E element : array) {
+                stack.push(element);
+            }
+        }
+        return stack;
+    }
+
+    /**
+     * <p>
+     * Converts the given array to a stack (ArrayStack) with full resilience enabled.
+     * Elements are pushed onto the stack in array order.
+     * </p>
+     *
+     * @param <E>                    the type of elements in the array
+     * @param array                  the array to convert, may be {@code null}
+     * @param maxPermits             the maximum number of operations allowed per window
+     * @param windowMillis           the window duration in milliseconds
+     * @param failureThreshold       the number of failures before opening the circuit
+     * @param monitoringWindowMillis the monitoring window duration
+     * @param cooldownMillis         the cooldown duration before trying half-open
+     * @return a new ArrayStack with full resilience and all array elements
+     * @since 4.6
+     */
+    static <E> ArrayStack<E> toArrayStackWithResilience(final E[] array,
+                                                         final long maxPermits,
+                                                         final long windowMillis,
+                                                         final int failureThreshold,
+                                                         final long monitoringWindowMillis,
+                                                         final long cooldownMillis) {
+        final ArrayStack<E> stack = ArrayStacks.withResilience(
+            maxPermits, windowMillis, failureThreshold, monitoringWindowMillis, cooldownMillis);
+        if (array != null) {
+            for (final E element : array) {
+                stack.push(element);
+            }
+        }
+        return stack;
+    }
+
+    /**
+     * <p>
+     * Checks if all elements in the given array are non-null.
+     * Returns {@code false} if the array is null or empty.
+     * </p>
+     *
+     * @param array the array to check, may be {@code null}
+     * @return {@code true} if all elements are non-null, {@code false} otherwise
+     * @since 4.6
+     */
+    static boolean allNonNull(final Object[] array) {
+        if (array == null || array.length == 0) {
+            return false;
+        }
+        for (final Object element : array) {
+            if (element == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * <p>
+     * Counts the number of non-null elements in the given array.
+     * Returns 0 if the array is null.
+     * </p>
+     *
+     * @param array the array to count, may be {@code null}
+     * @return the count of non-null elements
+     * @since 4.6
+     */
+    static int countNonNull(final Object[] array) {
+        if (array == null) {
+            return 0;
+        }
+        int count = 0;
+        for (final Object element : array) {
+            if (element != null) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
      * Don't allow instances.
      */
     private ArrayUtils() {

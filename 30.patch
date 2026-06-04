@@ -1,0 +1,1128 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..fe88f9781 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -37,6 +37,12 @@ import java.util.EmptyStackException;
+  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
+  * removed {@code Buffer} interface anymore.
+  * </p>
++ * <p>
++ * <strong>Resilience Features (since 4.6):</strong> This class supports optional
++ * request rate limiting and circuit breaker mechanisms to improve system stability
++ * under high load or failure conditions. Use {@link ResilienceConfig} to configure
++ * these features, or use the convenience factory methods in {@link ArrayStacks}.
++ * </p>
+  *
+  * @param <E> the type of elements in this list
+  * @see java.util.Stack
+@@ -46,9 +52,12 @@ import java.util.EmptyStackException;
+ @Deprecated
+ public class ArrayStack<E> extends ArrayList<E> {
+ 
+-    /** Ensure serialization compatibility */
+     private static final long serialVersionUID = 2130079159931574599L;
+ 
++    private transient RateLimiter rateLimiter;
++    private transient CircuitBreaker circuitBreaker;
++    private transient boolean resilienceEnabled;
++
+     /**
+      * Constructs a new empty {@code ArrayStack}. The initial size
+      * is controlled by {@code ArrayList} and is currently 10.
+@@ -67,6 +76,31 @@ public class ArrayStack<E> extends ArrayList<E> {
+         super(initialSize);
+     }
+ 
++    /**
++     * Constructs a new {@code ArrayStack} with resilience configuration.
++     *
++     * @param config  the resilience configuration containing rate limiter
++     *                and circuit breaker settings
++     * @since 4.6
++     */
++    public ArrayStack(final ResilienceConfig config) {
++        this();
++        applyResilienceConfig(config);
++    }
++
++    /**
++     * Constructs a new empty {@code ArrayStack} with an initial size and resilience configuration.
++     *
++     * @param initialSize  the initial size to use
++     * @param config       the resilience configuration
++     * @throws IllegalArgumentException  if the specified initial size is negative
++     * @since 4.6
++     */
++    public ArrayStack(final int initialSize, final ResilienceConfig config) {
++        super(initialSize);
++        applyResilienceConfig(config);
++    }
++
+     /**
+      * Return {@code true} if this stack is currently empty.
+      * <p>
+@@ -85,13 +119,23 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *
+      * @return the top item on the stack
+      * @throws EmptyStackException  if the stack is empty
++     * @throws RateLimitExceededException  if the rate limit has been exceeded
++     * @throws CircuitBreakerOpenException if the circuit breaker is open
+      */
+     public E peek() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
++        checkResilience();
++        try {
++            final int n = size();
++            if (n <= 0) {
++                throw new EmptyStackException();
++            }
++            final E result = get(n - 1);
++            recordSuccess();
++            return result;
++        } catch (final Exception e) {
++            recordFailure();
++            throw e;
+         }
+-        return get(n - 1);
+     }
+ 
+     /**
+@@ -102,13 +146,23 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the n'th item on the stack, zero relative
+      * @throws EmptyStackException  if there are not enough items on the
+      *  stack to satisfy this request
++     * @throws RateLimitExceededException  if the rate limit has been exceeded
++     * @throws CircuitBreakerOpenException if the circuit breaker is open
+      */
+     public E peek(final int n) throws EmptyStackException {
+-        final int m = size() - n - 1;
+-        if (m < 0) {
+-            throw new EmptyStackException();
++        checkResilience();
++        try {
++            final int m = size() - n - 1;
++            if (m < 0) {
++                throw new EmptyStackException();
++            }
++            final E result = get(m);
++            recordSuccess();
++            return result;
++        } catch (final Exception e) {
++            recordFailure();
++            throw e;
+         }
+-        return get(m);
+     }
+ 
+     /**
+@@ -116,13 +170,23 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *
+      * @return the top item on the stack
+      * @throws EmptyStackException  if the stack is empty
++     * @throws RateLimitExceededException  if the rate limit has been exceeded
++     * @throws CircuitBreakerOpenException if the circuit breaker is open
+      */
+     public E pop() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
++        checkResilience();
++        try {
++            final int n = size();
++            if (n <= 0) {
++                throw new EmptyStackException();
++            }
++            final E result = remove(n - 1);
++            recordSuccess();
++            return result;
++        } catch (final Exception e) {
++            recordFailure();
++            throw e;
+         }
+-        return remove(n - 1);
+     }
+ 
+     /**
+@@ -131,10 +195,19 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *
+      * @param item  the item to be added
+      * @return the item just pushed
++     * @throws RateLimitExceededException  if the rate limit has been exceeded
++     * @throws CircuitBreakerOpenException if the circuit breaker is open
+      */
+     public E push(final E item) {
+-        add(item);
+-        return item;
++        checkResilience();
++        try {
++            add(item);
++            recordSuccess();
++            return item;
++        } catch (final Exception e) {
++            recordFailure();
++            throw e;
++        }
+     }
+ 
+     /**
+@@ -147,20 +220,280 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *
+      * @param object  the object to be searched for
+      * @return the 1-based depth into the stack of the object, or -1 if not found
++     * @throws RateLimitExceededException  if the rate limit has been exceeded
++     * @throws CircuitBreakerOpenException if the circuit breaker is open
+      */
+     public int search(final Object object) {
+-        int i = size() - 1;        // Current index
+-        int n = 1;                 // Current distance
+-        while (i >= 0) {
+-            final Object current = get(i);
+-            if (object == null && current == null ||
+-                object != null && object.equals(current)) {
+-                return n;
++        checkResilience();
++        try {
++            int i = size() - 1;
++            int n = 1;
++            while (i >= 0) {
++                final Object current = get(i);
++                if (object == null && current == null ||
++                    object != null && object.equals(current)) {
++                    recordSuccess();
++                    return n;
++                }
++                i--;
++                n++;
+             }
+-            i--;
+-            n++;
++            recordSuccess();
++            return -1;
++        } catch (final Exception e) {
++            recordFailure();
++            throw e;
++        }
++    }
++
++    /**
++     * Applies a resilience configuration to this stack.
++     *
++     * @param config  the resilience configuration to apply
++     * @since 4.6
++     */
++    public void applyResilienceConfig(final ResilienceConfig config) {
++        if (config == null) {
++            this.resilienceEnabled = false;
++            this.rateLimiter = null;
++            this.circuitBreaker = null;
++            return;
++        }
++        this.resilienceEnabled = true;
++        if (config.getRateLimiterConfig() != null) {
++            final RateLimiterConfig rc = config.getRateLimiterConfig();
++            this.rateLimiter = new RateLimiter(rc.getMaxPermits(), rc.getWindowMillis());
+         }
+-        return -1;
++        if (config.getCircuitBreakerConfig() != null) {
++            final CircuitBreakerConfig cc = config.getCircuitBreakerConfig();
++            this.circuitBreaker = new CircuitBreaker(
++                cc.getFailureThreshold(),
++                cc.getMonitoringWindowMillis(),
++                cc.getCooldownMillis(),
++                cc.getHalfOpenMaxAttempts()
++            );
++        }
++    }
++
++    /**
++     * Returns whether resilience features are enabled on this stack.
++     *
++     * @return true if rate limiting or circuit breaker is enabled
++     * @since 4.6
++     */
++    public boolean isResilienceEnabled() {
++        return resilienceEnabled;
+     }
+ 
++    /**
++     * Returns the rate limiter instance, or null if not configured.
++     *
++     * @return the rate limiter or null
++     * @since 4.6
++     */
++    public RateLimiter getRateLimiter() {
++        return rateLimiter;
++    }
++
++    /**
++     * Returns the circuit breaker instance, or null if not configured.
++     *
++     * @return the circuit breaker or null
++     * @since 4.6
++     */
++    public CircuitBreaker getCircuitBreaker() {
++        return circuitBreaker;
++    }
++
++    /**
++     * Disables all resilience features on this stack.
++     *
++     * @since 4.6
++     */
++    public void disableResilience() {
++        this.resilienceEnabled = false;
++        this.rateLimiter = null;
++        this.circuitBreaker = null;
++    }
++
++    private void checkResilience() {
++        if (!resilienceEnabled) {
++            return;
++        }
++        if (rateLimiter != null && !rateLimiter.tryAcquire()) {
++            throw new RateLimitExceededException(
++                "Rate limit exceeded: " + rateLimiter.getMaxPermits() +
++                " permits per " + rateLimiter.getWindowMillis() + "ms"
++            );
++        }
++        if (circuitBreaker != null && !circuitBreaker.allowRequest()) {
++            throw new CircuitBreakerOpenException(
++                "Circuit breaker is open: " + circuitBreaker.getFailureCount() +
++                " failures (threshold: " + circuitBreaker.getFailureThreshold() + ")"
++            );
++        }
++    }
++
++    private void recordSuccess() {
++        if (circuitBreaker != null) {
++            circuitBreaker.recordSuccess();
++        }
++    }
++
++    private void recordFailure() {
++        if (circuitBreaker != null) {
++            circuitBreaker.recordFailure();
++        }
++    }
++
++    /**
++     * Configuration holder for resilience features.
++     *
++     * @since 4.6
++     */
++    public static class ResilienceConfig {
++
++        private RateLimiterConfig rateLimiterConfig;
++        private CircuitBreakerConfig circuitBreakerConfig;
++
++        public ResilienceConfig() {
++        }
++
++        public RateLimiterConfig getRateLimiterConfig() {
++            return rateLimiterConfig;
++        }
++
++        public void setRateLimiterConfig(final RateLimiterConfig rateLimiterConfig) {
++            this.rateLimiterConfig = rateLimiterConfig;
++        }
++
++        public CircuitBreakerConfig getCircuitBreakerConfig() {
++            return circuitBreakerConfig;
++        }
++
++        public void setCircuitBreakerConfig(final CircuitBreakerConfig circuitBreakerConfig) {
++            this.circuitBreakerConfig = circuitBreakerConfig;
++        }
++
++        public ResilienceConfig withRateLimiter(final long maxPermits, final long windowMillis) {
++            this.rateLimiterConfig = new RateLimiterConfig(maxPermits, windowMillis);
++            return this;
++        }
++
++        public ResilienceConfig withCircuitBreaker(final int failureThreshold,
++                                                    final long monitoringWindowMillis,
++                                                    final long cooldownMillis) {
++            this.circuitBreakerConfig = new CircuitBreakerConfig(
++                failureThreshold, monitoringWindowMillis, cooldownMillis
++            );
++            return this;
++        }
++
++        public ResilienceConfig withCircuitBreaker(final int failureThreshold,
++                                                    final long monitoringWindowMillis,
++                                                    final long cooldownMillis,
++                                                    final int halfOpenMaxAttempts) {
++            this.circuitBreakerConfig = new CircuitBreakerConfig(
++                failureThreshold, monitoringWindowMillis, cooldownMillis, halfOpenMaxAttempts
++            );
++            return this;
++        }
++    }
++
++    /**
++     * Configuration for the rate limiter.
++     *
++     * @since 4.6
++     */
++    public static class RateLimiterConfig {
++
++        private final long maxPermits;
++        private final long windowMillis;
++
++        public RateLimiterConfig(final long maxPermits, final long windowMillis) {
++            this.maxPermits = maxPermits;
++            this.windowMillis = windowMillis;
++        }
++
++        public long getMaxPermits() {
++            return maxPermits;
++        }
++
++        public long getWindowMillis() {
++            return windowMillis;
++        }
++    }
++
++    /**
++     * Configuration for the circuit breaker.
++     *
++     * @since 4.6
++     */
++    public static class CircuitBreakerConfig {
++
++        private final int failureThreshold;
++        private final long monitoringWindowMillis;
++        private final long cooldownMillis;
++        private final int halfOpenMaxAttempts;
++
++        public CircuitBreakerConfig(final int failureThreshold,
++                                    final long monitoringWindowMillis,
++                                    final long cooldownMillis) {
++            this(failureThreshold, monitoringWindowMillis, cooldownMillis, 1);
++        }
++
++        public CircuitBreakerConfig(final int failureThreshold,
++                                    final long monitoringWindowMillis,
++                                    final long cooldownMillis,
++                                    final int halfOpenMaxAttempts) {
++            this.failureThreshold = failureThreshold;
++            this.monitoringWindowMillis = monitoringWindowMillis;
++            this.cooldownMillis = cooldownMillis;
++            this.halfOpenMaxAttempts = halfOpenMaxAttempts;
++        }
++
++        public int getFailureThreshold() {
++            return failureThreshold;
++        }
++
++        public long getMonitoringWindowMillis() {
++            return monitoringWindowMillis;
++        }
++
++        public long getCooldownMillis() {
++            return cooldownMillis;
++        }
++
++        public int getHalfOpenMaxAttempts() {
++            return halfOpenMaxAttempts;
++        }
++    }
++
++    /**
++     * Exception thrown when the rate limit has been exceeded.
++     *
++     * @since 4.6
++     */
++    public static class RateLimitExceededException extends RuntimeException {
++
++        private static final long serialVersionUID = 1L;
++
++        public RateLimitExceededException(final String message) {
++            super(message);
++        }
++    }
++
++    /**
++     * Exception thrown when the circuit breaker is open.
++     *
++     * @since 4.6
++     */
++    public static class CircuitBreakerOpenException extends RuntimeException {
++
++        private static final long serialVersionUID = 1L;
++
++        public CircuitBreakerOpenException(final String message) {
++            super(message);
++        }
++    }
+ }
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStacks.java b/src/main/java/org/apache/commons/collections4/ArrayStacks.java
+new file mode 100644
+index 000000000..eb053a9d5
+--- /dev/null
++++ b/src/main/java/org/apache/commons/collections4/ArrayStacks.java
+@@ -0,0 +1,177 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++/**
++ * Utility class providing factory methods and helpers for creating
++ * {@link ArrayStack} instances with resilience features.
++ * <p>
++ * This class provides convenient factory methods for creating ArrayStack
++ * instances pre-configured with rate limiting and circuit breaker mechanisms.
++ * </p>
++ *
++ * @since 4.6
++ */
++public final class ArrayStacks {
++
++    private ArrayStacks() {
++    }
++
++    /**
++     * Creates a new empty ArrayStack with resilience disabled.
++     *
++     * @param <E> the type of elements
++     * @return a new ArrayStack instance
++     */
++    public static <E> ArrayStack<E> create() {
++        return new ArrayStack<>();
++    }
++
++    /**
++     * Creates a new empty ArrayStack with the specified initial capacity.
++     *
++     * @param <E>          the type of elements
++     * @param initialSize  the initial capacity
++     * @return a new ArrayStack instance
++     */
++    public static <E> ArrayStack<E> create(final int initialSize) {
++        return new ArrayStack<>(initialSize);
++    }
++
++    /**
++     * Creates a new ArrayStack with rate limiting enabled.
++     *
++     * @param <E>          the type of elements
++     * @param maxPermits   the maximum number of operations allowed per window
++     * @param windowMillis the window duration in milliseconds
++     * @return a new ArrayStack with rate limiting configured
++     */
++    public static <E> ArrayStack<E> withRateLimiting(final long maxPermits,
++                                                     final long windowMillis) {
++        final ArrayStack.ResilienceConfig config = new ArrayStack.ResilienceConfig()
++            .withRateLimiter(maxPermits, windowMillis);
++        return new ArrayStack<>(config);
++    }
++
++    /**
++     * Creates a new ArrayStack with circuit breaker enabled.
++     *
++     * @param <E>                    the type of elements
++     * @param failureThreshold       the number of failures before opening the circuit
++     * @param monitoringWindowMillis the monitoring window duration
++     * @param cooldownMillis         the cooldown duration before trying half-open
++     * @return a new ArrayStack with circuit breaker configured
++     */
++    public static <E> ArrayStack<E> withCircuitBreaker(final int failureThreshold,
++                                                        final long monitoringWindowMillis,
++                                                        final long cooldownMillis) {
++        final ArrayStack.ResilienceConfig config = new ArrayStack.ResilienceConfig()
++            .withCircuitBreaker(failureThreshold, monitoringWindowMillis, cooldownMillis);
++        return new ArrayStack<>(config);
++    }
++
++    /**
++     * Creates a new ArrayStack with both rate limiting and circuit breaker enabled.
++     *
++     * @param <E>                    the type of elements
++     * @param maxPermits             the maximum number of operations allowed per window
++     * @param windowMillis           the window duration in milliseconds
++     * @param failureThreshold       the number of failures before opening the circuit
++     * @param monitoringWindowMillis the monitoring window duration
++     * @param cooldownMillis         the cooldown duration before trying half-open
++     * @return a new ArrayStack with both features configured
++     */
++    public static <E> ArrayStack<E> withResilience(final long maxPermits,
++                                                    final long windowMillis,
++                                                    final int failureThreshold,
++                                                    final long monitoringWindowMillis,
++                                                    final long cooldownMillis) {
++        final ArrayStack.ResilienceConfig config = new ArrayStack.ResilienceConfig()
++            .withRateLimiter(maxPermits, windowMillis)
++            .withCircuitBreaker(failureThreshold, monitoringWindowMillis, cooldownMillis);
++        return new ArrayStack<>(config);
++    }
++
++    /**
++     * Creates a new ArrayStack with full resilience configuration.
++     *
++     * @param <E>                    the type of elements
++     * @param maxPermits             the maximum number of operations allowed per window
++     * @param windowMillis           the window duration in milliseconds
++     * @param failureThreshold       the number of failures before opening the circuit
++     * @param monitoringWindowMillis the monitoring window duration
++     * @param cooldownMillis         the cooldown duration before trying half-open
++     * @param halfOpenMaxAttempts    the maximum probe attempts in half-open state
++     * @return a new ArrayStack with full resilience configured
++     */
++    public static <E> ArrayStack<E> withFullResilience(final long maxPermits,
++                                                        final long windowMillis,
++                                                        final int failureThreshold,
++                                                        final long monitoringWindowMillis,
++                                                        final long cooldownMillis,
++                                                        final int halfOpenMaxAttempts) {
++        final ArrayStack.ResilienceConfig config = new ArrayStack.ResilienceConfig()
++            .withRateLimiter(maxPermits, windowMillis)
++            .withCircuitBreaker(failureThreshold, monitoringWindowMillis, cooldownMillis, halfOpenMaxAttempts);
++        return new ArrayStack<>(config);
++    }
++
++    /**
++     * Creates a new ArrayStack from the given elements with resilience disabled.
++     *
++     * @param <E>      the type of elements
++     * @param elements the elements to push onto the stack (in order)
++     * @return a new ArrayStack containing the given elements
++     */
++    @SafeVarargs
++    public static <E> ArrayStack<E> of(final E... elements) {
++        final ArrayStack<E> stack = new ArrayStack<>(elements.length);
++        for (final E element : elements) {
++            stack.push(element);
++        }
++        return stack;
++    }
++
++    /**
++     * Creates a new ArrayStack from the given elements with rate limiting enabled.
++     *
++     * @param <E>          the type of elements
++     * @param maxPermits   the maximum number of operations allowed per window
++     * @param windowMillis the window duration in milliseconds
++     * @param elements     the elements to push onto the stack (in order)
++     * @return a new ArrayStack with rate limiting and the given elements
++     */
++    @SafeVarargs
++    public static <E> ArrayStack<E> ofWithRateLimiting(final long maxPermits,
++                                                        final long windowMillis,
++                                                        final E... elements) {
++        final ArrayStack<E> stack = withRateLimiting(maxPermits, windowMillis);
++        for (final E element : elements) {
++            stack.push(element);
++        }
++        return stack;
++    }
++
++    /**
++     * Creates a pre-configured resilience configuration builder.
++     *
++     * @return a new ResilienceConfig instance
++     */
++    public static ArrayStack.ResilienceConfig resilienceConfig() {
++        return new ArrayStack.ResilienceConfig();
++    }
++}
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayUtils.java b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+index 8fdbab144..5c096bce4 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayUtils.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+@@ -108,6 +108,158 @@ final class ArrayUtils {
+         return indexOf(array, objectToFind, 0);
+     }
+ 
++    /**
++     * <p>
++     * Converts the given array to a stack (ArrayStack) with resilience disabled.
++     * Elements are pushed onto the stack in array order, so the last array element
++     * will be at the top of the stack.
++     * </p>
++     *
++     * @param <E>    the type of elements in the array
++     * @param array  the array to convert, may be {@code null}
++     * @return a new ArrayStack containing all array elements, or an empty stack if the array is null
++     * @since 4.6
++     */
++    static <E> ArrayStack<E> toArrayStack(final E[] array) {
++        final ArrayStack<E> stack = new ArrayStack<>();
++        if (array != null) {
++            for (final E element : array) {
++                stack.push(element);
++            }
++        }
++        return stack;
++    }
++
++    /**
++     * <p>
++     * Converts the given array to a stack (ArrayStack) with rate limiting enabled.
++     * Elements are pushed onto the stack in array order.
++     * </p>
++     *
++     * @param <E>          the type of elements in the array
++     * @param array        the array to convert, may be {@code null}
++     * @param maxPermits   the maximum number of operations allowed per window
++     * @param windowMillis the window duration in milliseconds
++     * @return a new ArrayStack with rate limiting and all array elements
++     * @since 4.6
++     */
++    static <E> ArrayStack<E> toArrayStackWithRateLimiting(final E[] array,
++                                                           final long maxPermits,
++                                                           final long windowMillis) {
++        final ArrayStack<E> stack = ArrayStacks.withRateLimiting(maxPermits, windowMillis);
++        if (array != null) {
++            for (final E element : array) {
++                stack.push(element);
++            }
++        }
++        return stack;
++    }
++
++    /**
++     * <p>
++     * Converts the given array to a stack (ArrayStack) with circuit breaker enabled.
++     * Elements are pushed onto the stack in array order.
++     * </p>
++     *
++     * @param <E>                    the type of elements in the array
++     * @param array                  the array to convert, may be {@code null}
++     * @param failureThreshold       the number of failures before opening the circuit
++     * @param monitoringWindowMillis the monitoring window duration
++     * @param cooldownMillis         the cooldown duration before trying half-open
++     * @return a new ArrayStack with circuit breaker and all array elements
++     * @since 4.6
++     */
++    static <E> ArrayStack<E> toArrayStackWithCircuitBreaker(final E[] array,
++                                                             final int failureThreshold,
++                                                             final long monitoringWindowMillis,
++                                                             final long cooldownMillis) {
++        final ArrayStack<E> stack = ArrayStacks.withCircuitBreaker(
++            failureThreshold, monitoringWindowMillis, cooldownMillis);
++        if (array != null) {
++            for (final E element : array) {
++                stack.push(element);
++            }
++        }
++        return stack;
++    }
++
++    /**
++     * <p>
++     * Converts the given array to a stack (ArrayStack) with full resilience enabled.
++     * Elements are pushed onto the stack in array order.
++     * </p>
++     *
++     * @param <E>                    the type of elements in the array
++     * @param array                  the array to convert, may be {@code null}
++     * @param maxPermits             the maximum number of operations allowed per window
++     * @param windowMillis           the window duration in milliseconds
++     * @param failureThreshold       the number of failures before opening the circuit
++     * @param monitoringWindowMillis the monitoring window duration
++     * @param cooldownMillis         the cooldown duration before trying half-open
++     * @return a new ArrayStack with full resilience and all array elements
++     * @since 4.6
++     */
++    static <E> ArrayStack<E> toArrayStackWithResilience(final E[] array,
++                                                         final long maxPermits,
++                                                         final long windowMillis,
++                                                         final int failureThreshold,
++                                                         final long monitoringWindowMillis,
++                                                         final long cooldownMillis) {
++        final ArrayStack<E> stack = ArrayStacks.withResilience(
++            maxPermits, windowMillis, failureThreshold, monitoringWindowMillis, cooldownMillis);
++        if (array != null) {
++            for (final E element : array) {
++                stack.push(element);
++            }
++        }
++        return stack;
++    }
++
++    /**
++     * <p>
++     * Checks if all elements in the given array are non-null.
++     * Returns {@code false} if the array is null or empty.
++     * </p>
++     *
++     * @param array the array to check, may be {@code null}
++     * @return {@code true} if all elements are non-null, {@code false} otherwise
++     * @since 4.6
++     */
++    static boolean allNonNull(final Object[] array) {
++        if (array == null || array.length == 0) {
++            return false;
++        }
++        for (final Object element : array) {
++            if (element == null) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    /**
++     * <p>
++     * Counts the number of non-null elements in the given array.
++     * Returns 0 if the array is null.
++     * </p>
++     *
++     * @param array the array to count, may be {@code null}
++     * @return the count of non-null elements
++     * @since 4.6
++     */
++    static int countNonNull(final Object[] array) {
++        if (array == null) {
++            return 0;
++        }
++        int count = 0;
++        for (final Object element : array) {
++            if (element != null) {
++                count++;
++            }
++        }
++        return count;
++    }
++
+     /**
+      * Don't allow instances.
+      */
+diff --git a/src/main/java/org/apache/commons/collections4/CircuitBreaker.java b/src/main/java/org/apache/commons/collections4/CircuitBreaker.java
+new file mode 100644
+index 000000000..240fc4d77
+--- /dev/null
++++ b/src/main/java/org/apache/commons/collections4/CircuitBreaker.java
+@@ -0,0 +1,174 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++import java.util.concurrent.atomic.AtomicLong;
++
++public class CircuitBreaker {
++
++    public enum State {
++        CLOSED,
++        OPEN,
++        HALF_OPEN
++    }
++
++    private final int failureThreshold;
++    private final long monitoringWindowMillis;
++    private final long cooldownMillis;
++    private final int halfOpenMaxAttempts;
++
++    private final AtomicLong failureCount;
++    private final AtomicLong successCount;
++    private final AtomicLong halfOpenAttempts;
++    private volatile State state;
++    private volatile long lastFailureTime;
++    private volatile long windowStart;
++
++    public CircuitBreaker(final int failureThreshold,
++                          final long monitoringWindowMillis,
++                          final long cooldownMillis,
++                          final int halfOpenMaxAttempts) {
++        if (failureThreshold <= 0) {
++            throw new IllegalArgumentException("failureThreshold must be greater than zero");
++        }
++        if (monitoringWindowMillis <= 0) {
++            throw new IllegalArgumentException("monitoringWindowMillis must be greater than zero");
++        }
++        if (cooldownMillis <= 0) {
++            throw new IllegalArgumentException("cooldownMillis must be greater than zero");
++        }
++        if (halfOpenMaxAttempts <= 0) {
++            throw new IllegalArgumentException("halfOpenMaxAttempts must be greater than zero");
++        }
++        this.failureThreshold = failureThreshold;
++        this.monitoringWindowMillis = monitoringWindowMillis;
++        this.cooldownMillis = cooldownMillis;
++        this.halfOpenMaxAttempts = halfOpenMaxAttempts;
++        this.state = State.CLOSED;
++        this.failureCount = new AtomicLong(0);
++        this.successCount = new AtomicLong(0);
++        this.halfOpenAttempts = new AtomicLong(0);
++        this.windowStart = System.currentTimeMillis();
++    }
++
++    public CircuitBreaker(final int failureThreshold,
++                          final long monitoringWindowMillis,
++                          final long cooldownMillis) {
++        this(failureThreshold, monitoringWindowMillis, cooldownMillis, 1);
++    }
++
++    public synchronized boolean allowRequest() {
++        final long now = System.currentTimeMillis();
++        switch (state) {
++            case CLOSED:
++                resetWindowIfExpired(now);
++                return true;
++            case OPEN:
++                if (now - lastFailureTime >= cooldownMillis) {
++                    transitionToHalfOpen();
++                    return true;
++                }
++                return false;
++            case HALF_OPEN:
++                return halfOpenAttempts.getAndIncrement() < halfOpenMaxAttempts;
++            default:
++                return false;
++        }
++    }
++
++    public synchronized void recordSuccess() {
++        if (state == State.HALF_OPEN) {
++            transitionToClosed();
++        } else {
++            successCount.incrementAndGet();
++        }
++    }
++
++    public synchronized void recordFailure() {
++        final long now = System.currentTimeMillis();
++        if (state == State.HALF_OPEN) {
++            transitionToOpen(now);
++            return;
++        }
++        if (state == State.CLOSED) {
++            resetWindowIfExpired(now);
++            final long count = failureCount.incrementAndGet();
++            if (count >= failureThreshold) {
++                transitionToOpen(now);
++            }
++        }
++    }
++
++    public State getState() {
++        final long now = System.currentTimeMillis();
++        if (state == State.OPEN && now - lastFailureTime >= cooldownMillis) {
++            return State.HALF_OPEN;
++        }
++        return state;
++    }
++
++    public long getFailureCount() {
++        return failureCount.get();
++    }
++
++    public int getFailureThreshold() {
++        return failureThreshold;
++    }
++
++    public long getMonitoringWindowMillis() {
++        return monitoringWindowMillis;
++    }
++
++    public long getCooldownMillis() {
++        return cooldownMillis;
++    }
++
++    public synchronized void reset() {
++        state = State.CLOSED;
++        failureCount.set(0);
++        successCount.set(0);
++        halfOpenAttempts.set(0);
++        windowStart = System.currentTimeMillis();
++    }
++
++    private void resetWindowIfExpired(final long now) {
++        if (now - windowStart >= monitoringWindowMillis) {
++            failureCount.set(0);
++            successCount.set(0);
++            windowStart = now;
++        }
++    }
++
++    private void transitionToOpen(final long now) {
++        state = State.OPEN;
++        lastFailureTime = now;
++        halfOpenAttempts.set(0);
++    }
++
++    private void transitionToHalfOpen() {
++        state = State.HALF_OPEN;
++        halfOpenAttempts.set(0);
++    }
++
++    private void transitionToClosed() {
++        state = State.CLOSED;
++        failureCount.set(0);
++        successCount.set(0);
++        halfOpenAttempts.set(0);
++        windowStart = System.currentTimeMillis();
++    }
++}
+diff --git a/src/main/java/org/apache/commons/collections4/RateLimiter.java b/src/main/java/org/apache/commons/collections4/RateLimiter.java
+new file mode 100644
+index 000000000..8873d892d
+--- /dev/null
++++ b/src/main/java/org/apache/commons/collections4/RateLimiter.java
+@@ -0,0 +1,136 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++import java.util.concurrent.atomic.AtomicLong;
++
++/**
++ * A thread-safe token bucket rate limiter that controls the rate of operations.
++ * <p>
++ * This implementation uses a sliding window approach to track request rates
++ * and allows configuration of both the maximum permits per window and the
++ * window duration.
++ * </p>
++ *
++ * @since 4.6
++ */
++public class RateLimiter {
++
++    private final long maxPermits;
++    private final long windowMillis;
++    private final AtomicLong counter;
++    private volatile long windowStart;
++
++    /**
++     * Constructs a RateLimiter with the specified maximum permits and window duration.
++     *
++     * @param maxPermits    the maximum number of permits allowed per window
++     * @param windowMillis  the window duration in milliseconds
++     * @throws IllegalArgumentException if maxPermits is less than or equal to zero
++     *                                  or windowMillis is less than or equal to zero
++     */
++    public RateLimiter(final long maxPermits, final long windowMillis) {
++        if (maxPermits <= 0) {
++            throw new IllegalArgumentException("maxPermits must be greater than zero");
++        }
++        if (windowMillis <= 0) {
++            throw new IllegalArgumentException("windowMillis must be greater than zero");
++        }
++        this.maxPermits = maxPermits;
++        this.windowMillis = windowMillis;
++        this.counter = new AtomicLong(0);
++        this.windowStart = System.currentTimeMillis();
++    }
++
++    /**
++     * Attempts to acquire a permit.
++     *
++     * @return true if a permit was acquired, false if the rate limit has been exceeded
++     */
++    public synchronized boolean tryAcquire() {
++        final long now = System.currentTimeMillis();
++        if (now - windowStart >= windowMillis) {
++            counter.set(0);
++            windowStart = now;
++        }
++        final long currentCount = counter.get();
++        if (currentCount < maxPermits) {
++            counter.incrementAndGet();
++            return true;
++        }
++        return false;
++    }
++
++    /**
++     * Acquires a permit, blocking until one is available.
++     *
++     * @throws InterruptedException if the current thread is interrupted while waiting
++     */
++    public void acquire() throws InterruptedException {
++        while (!tryAcquire()) {
++            Thread.sleep(1);
++        }
++    }
++
++    /**
++     * Returns the maximum number of permits allowed per window.
++     *
++     * @return the max permits
++     */
++    public long getMaxPermits() {
++        return maxPermits;
++    }
++
++    /**
++     * Returns the window duration in milliseconds.
++     *
++     * @return the window duration in millis
++     */
++    public long getWindowMillis() {
++        return windowMillis;
++    }
++
++    /**
++     * Returns the current number of used permits in the current window.
++     *
++     * @return the current permit count
++     */
++    public long getCurrentCount() {
++        return counter.get();
++    }
++
++    /**
++     * Returns the number of remaining permits in the current window.
++     *
++     * @return the remaining permits
++     */
++    public long getRemainingPermits() {
++        final long now = System.currentTimeMillis();
++        if (now - windowStart >= windowMillis) {
++            return maxPermits;
++        }
++        return Math.max(0, maxPermits - counter.get());
++    }
++
++    /**
++     * Resets the rate limiter, clearing the current window.
++     */
++    public synchronized void reset() {
++        counter.set(0);
++        windowStart = System.currentTimeMillis();
++    }
++}

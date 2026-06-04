@@ -37,6 +37,12 @@ import java.util.EmptyStackException;
  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
  * removed {@code Buffer} interface anymore.
  * </p>
+ * <p>
+ * <strong>Resilience Features (since 4.6):</strong> This class supports optional
+ * request rate limiting and circuit breaker mechanisms to improve system stability
+ * under high load or failure conditions. Use {@link ResilienceConfig} to configure
+ * these features, or use the convenience factory methods in {@link ArrayStacks}.
+ * </p>
  *
  * @param <E> the type of elements in this list
  * @see java.util.Stack
@@ -46,8 +52,11 @@ import java.util.EmptyStackException;
 @Deprecated
 public class ArrayStack<E> extends ArrayList<E> {
 
-    /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
+
+    private transient RateLimiter rateLimiter;
+    private transient CircuitBreaker circuitBreaker;
+    private transient boolean resilienceEnabled;
 
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
@@ -68,6 +77,31 @@ public class ArrayStack<E> extends ArrayList<E> {
     }
 
     /**
+     * Constructs a new {@code ArrayStack} with resilience configuration.
+     *
+     * @param config  the resilience configuration containing rate limiter
+     *                and circuit breaker settings
+     * @since 4.6
+     */
+    public ArrayStack(final ResilienceConfig config) {
+        this();
+        applyResilienceConfig(config);
+    }
+
+    /**
+     * Constructs a new empty {@code ArrayStack} with an initial size and resilience configuration.
+     *
+     * @param initialSize  the initial size to use
+     * @param config       the resilience configuration
+     * @throws IllegalArgumentException  if the specified initial size is negative
+     * @since 4.6
+     */
+    public ArrayStack(final int initialSize, final ResilienceConfig config) {
+        super(initialSize);
+        applyResilienceConfig(config);
+    }
+
+    /**
      * Return {@code true} if this stack is currently empty.
      * <p>
      * This method exists for compatibility with {@link java.util.Stack}.
@@ -85,13 +119,23 @@ public class ArrayStack<E> extends ArrayList<E> {
      *
      * @return the top item on the stack
      * @throws EmptyStackException  if the stack is empty
+     * @throws RateLimitExceededException  if the rate limit has been exceeded
+     * @throws CircuitBreakerOpenException if the circuit breaker is open
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
+        checkResilience();
+        try {
+            final int n = size();
+            if (n <= 0) {
+                throw new EmptyStackException();
+            }
+            final E result = get(n - 1);
+            recordSuccess();
+            return result;
+        } catch (final Exception e) {
+            recordFailure();
+            throw e;
         }
-        return get(n - 1);
     }
 
     /**
@@ -102,13 +146,23 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the n'th item on the stack, zero relative
      * @throws EmptyStackException  if there are not enough items on the
      *  stack to satisfy this request
+     * @throws RateLimitExceededException  if the rate limit has been exceeded
+     * @throws CircuitBreakerOpenException if the circuit breaker is open
      */
     public E peek(final int n) throws EmptyStackException {
-        final int m = size() - n - 1;
-        if (m < 0) {
-            throw new EmptyStackException();
+        checkResilience();
+        try {
+            final int m = size() - n - 1;
+            if (m < 0) {
+                throw new EmptyStackException();
+            }
+            final E result = get(m);
+            recordSuccess();
+            return result;
+        } catch (final Exception e) {
+            recordFailure();
+            throw e;
         }
-        return get(m);
     }
 
     /**
@@ -116,13 +170,23 @@ public class ArrayStack<E> extends ArrayList<E> {
      *
      * @return the top item on the stack
      * @throws EmptyStackException  if the stack is empty
+     * @throws RateLimitExceededException  if the rate limit has been exceeded
+     * @throws CircuitBreakerOpenException if the circuit breaker is open
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
+        checkResilience();
+        try {
+            final int n = size();
+            if (n <= 0) {
+                throw new EmptyStackException();
+            }
+            final E result = remove(n - 1);
+            recordSuccess();
+            return result;
+        } catch (final Exception e) {
+            recordFailure();
+            throw e;
         }
-        return remove(n - 1);
     }
 
     /**
@@ -131,10 +195,19 @@ public class ArrayStack<E> extends ArrayList<E> {
      *
      * @param item  the item to be added
      * @return the item just pushed
+     * @throws RateLimitExceededException  if the rate limit has been exceeded
+     * @throws CircuitBreakerOpenException if the circuit breaker is open
      */
     public E push(final E item) {
-        add(item);
-        return item;
+        checkResilience();
+        try {
+            add(item);
+            recordSuccess();
+            return item;
+        } catch (final Exception e) {
+            recordFailure();
+            throw e;
+        }
     }
 
     /**
@@ -147,20 +220,280 @@ public class ArrayStack<E> extends ArrayList<E> {
      *
      * @param object  the object to be searched for
      * @return the 1-based depth into the stack of the object, or -1 if not found
+     * @throws RateLimitExceededException  if the rate limit has been exceeded
+     * @throws CircuitBreakerOpenException if the circuit breaker is open
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
-        while (i >= 0) {
-            final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
-                return n;
+        checkResilience();
+        try {
+            int i = size() - 1;
+            int n = 1;
+            while (i >= 0) {
+                final Object current = get(i);
+                if (object == null && current == null ||
+                    object != null && object.equals(current)) {
+                    recordSuccess();
+                    return n;
+                }
+                i--;
+                n++;
             }
-            i--;
-            n++;
+            recordSuccess();
+            return -1;
+        } catch (final Exception e) {
+            recordFailure();
+            throw e;
         }
-        return -1;
     }
 
+    /**
+     * Applies a resilience configuration to this stack.
+     *
+     * @param config  the resilience configuration to apply
+     * @since 4.6
+     */
+    public void applyResilienceConfig(final ResilienceConfig config) {
+        if (config == null) {
+            this.resilienceEnabled = false;
+            this.rateLimiter = null;
+            this.circuitBreaker = null;
+            return;
+        }
+        this.resilienceEnabled = true;
+        if (config.getRateLimiterConfig() != null) {
+            final RateLimiterConfig rc = config.getRateLimiterConfig();
+            this.rateLimiter = new RateLimiter(rc.getMaxPermits(), rc.getWindowMillis());
+        }
+        if (config.getCircuitBreakerConfig() != null) {
+            final CircuitBreakerConfig cc = config.getCircuitBreakerConfig();
+            this.circuitBreaker = new CircuitBreaker(
+                cc.getFailureThreshold(),
+                cc.getMonitoringWindowMillis(),
+                cc.getCooldownMillis(),
+                cc.getHalfOpenMaxAttempts()
+            );
+        }
+    }
+
+    /**
+     * Returns whether resilience features are enabled on this stack.
+     *
+     * @return true if rate limiting or circuit breaker is enabled
+     * @since 4.6
+     */
+    public boolean isResilienceEnabled() {
+        return resilienceEnabled;
+    }
+
+    /**
+     * Returns the rate limiter instance, or null if not configured.
+     *
+     * @return the rate limiter or null
+     * @since 4.6
+     */
+    public RateLimiter getRateLimiter() {
+        return rateLimiter;
+    }
+
+    /**
+     * Returns the circuit breaker instance, or null if not configured.
+     *
+     * @return the circuit breaker or null
+     * @since 4.6
+     */
+    public CircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
+    /**
+     * Disables all resilience features on this stack.
+     *
+     * @since 4.6
+     */
+    public void disableResilience() {
+        this.resilienceEnabled = false;
+        this.rateLimiter = null;
+        this.circuitBreaker = null;
+    }
+
+    private void checkResilience() {
+        if (!resilienceEnabled) {
+            return;
+        }
+        if (rateLimiter != null && !rateLimiter.tryAcquire()) {
+            throw new RateLimitExceededException(
+                "Rate limit exceeded: " + rateLimiter.getMaxPermits() +
+                " permits per " + rateLimiter.getWindowMillis() + "ms"
+            );
+        }
+        if (circuitBreaker != null && !circuitBreaker.allowRequest()) {
+            throw new CircuitBreakerOpenException(
+                "Circuit breaker is open: " + circuitBreaker.getFailureCount() +
+                " failures (threshold: " + circuitBreaker.getFailureThreshold() + ")"
+            );
+        }
+    }
+
+    private void recordSuccess() {
+        if (circuitBreaker != null) {
+            circuitBreaker.recordSuccess();
+        }
+    }
+
+    private void recordFailure() {
+        if (circuitBreaker != null) {
+            circuitBreaker.recordFailure();
+        }
+    }
+
+    /**
+     * Configuration holder for resilience features.
+     *
+     * @since 4.6
+     */
+    public static class ResilienceConfig {
+
+        private RateLimiterConfig rateLimiterConfig;
+        private CircuitBreakerConfig circuitBreakerConfig;
+
+        public ResilienceConfig() {
+        }
+
+        public RateLimiterConfig getRateLimiterConfig() {
+            return rateLimiterConfig;
+        }
+
+        public void setRateLimiterConfig(final RateLimiterConfig rateLimiterConfig) {
+            this.rateLimiterConfig = rateLimiterConfig;
+        }
+
+        public CircuitBreakerConfig getCircuitBreakerConfig() {
+            return circuitBreakerConfig;
+        }
+
+        public void setCircuitBreakerConfig(final CircuitBreakerConfig circuitBreakerConfig) {
+            this.circuitBreakerConfig = circuitBreakerConfig;
+        }
+
+        public ResilienceConfig withRateLimiter(final long maxPermits, final long windowMillis) {
+            this.rateLimiterConfig = new RateLimiterConfig(maxPermits, windowMillis);
+            return this;
+        }
+
+        public ResilienceConfig withCircuitBreaker(final int failureThreshold,
+                                                    final long monitoringWindowMillis,
+                                                    final long cooldownMillis) {
+            this.circuitBreakerConfig = new CircuitBreakerConfig(
+                failureThreshold, monitoringWindowMillis, cooldownMillis
+            );
+            return this;
+        }
+
+        public ResilienceConfig withCircuitBreaker(final int failureThreshold,
+                                                    final long monitoringWindowMillis,
+                                                    final long cooldownMillis,
+                                                    final int halfOpenMaxAttempts) {
+            this.circuitBreakerConfig = new CircuitBreakerConfig(
+                failureThreshold, monitoringWindowMillis, cooldownMillis, halfOpenMaxAttempts
+            );
+            return this;
+        }
+    }
+
+    /**
+     * Configuration for the rate limiter.
+     *
+     * @since 4.6
+     */
+    public static class RateLimiterConfig {
+
+        private final long maxPermits;
+        private final long windowMillis;
+
+        public RateLimiterConfig(final long maxPermits, final long windowMillis) {
+            this.maxPermits = maxPermits;
+            this.windowMillis = windowMillis;
+        }
+
+        public long getMaxPermits() {
+            return maxPermits;
+        }
+
+        public long getWindowMillis() {
+            return windowMillis;
+        }
+    }
+
+    /**
+     * Configuration for the circuit breaker.
+     *
+     * @since 4.6
+     */
+    public static class CircuitBreakerConfig {
+
+        private final int failureThreshold;
+        private final long monitoringWindowMillis;
+        private final long cooldownMillis;
+        private final int halfOpenMaxAttempts;
+
+        public CircuitBreakerConfig(final int failureThreshold,
+                                    final long monitoringWindowMillis,
+                                    final long cooldownMillis) {
+            this(failureThreshold, monitoringWindowMillis, cooldownMillis, 1);
+        }
+
+        public CircuitBreakerConfig(final int failureThreshold,
+                                    final long monitoringWindowMillis,
+                                    final long cooldownMillis,
+                                    final int halfOpenMaxAttempts) {
+            this.failureThreshold = failureThreshold;
+            this.monitoringWindowMillis = monitoringWindowMillis;
+            this.cooldownMillis = cooldownMillis;
+            this.halfOpenMaxAttempts = halfOpenMaxAttempts;
+        }
+
+        public int getFailureThreshold() {
+            return failureThreshold;
+        }
+
+        public long getMonitoringWindowMillis() {
+            return monitoringWindowMillis;
+        }
+
+        public long getCooldownMillis() {
+            return cooldownMillis;
+        }
+
+        public int getHalfOpenMaxAttempts() {
+            return halfOpenMaxAttempts;
+        }
+    }
+
+    /**
+     * Exception thrown when the rate limit has been exceeded.
+     *
+     * @since 4.6
+     */
+    public static class RateLimitExceededException extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        public RateLimitExceededException(final String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Exception thrown when the circuit breaker is open.
+     *
+     * @since 4.6
+     */
+    public static class CircuitBreakerOpenException extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        public CircuitBreakerOpenException(final String message) {
+            super(message);
+        }
+    }
 }
