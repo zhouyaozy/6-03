@@ -1,0 +1,254 @@
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayStackEndToEndTest.java b/src/test/java/org/apache/commons/collections4/ArrayStackEndToEndTest.java
+new file mode 100644
+index 000000000..3639a8fc3
+--- /dev/null
++++ b/src/test/java/org/apache/commons/collections4/ArrayStackEndToEndTest.java
+@@ -0,0 +1,248 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++import java.util.EmptyStackException;
++import java.util.Iterator;
++
++import org.junit.jupiter.api.Test;
++
++/**
++ * End-to-end tests for ArrayStack, simulating real user operation flows.
++ */
++@SuppressWarnings("deprecation") // we test a deprecated class
++public class ArrayStackEndToEndTest {
++
++    @Test
++    void testBasicStackOperationFlow() {
++        // 1. Create an empty stack
++        final ArrayStack<String> stack = new ArrayStack<>();
++        assertTrue(stack.empty(), "Stack should be empty initially");
++        assertEquals(0, stack.size(), "Stack size should be 0");
++
++        // 2. Push multiple elements
++        stack.push("Element 1");
++        stack.push("Element 2");
++        stack.push("Element 3");
++
++        assertFalse(stack.empty(), "Stack should not be empty after pushes");
++        assertEquals(3, stack.size(), "Stack size should be 3");
++
++        // 3. Peek at the top element
++        assertEquals("Element 3", stack.peek(), "Top element should be 'Element 3'");
++
++        // 4. Search for elements
++        assertEquals(1, stack.search("Element 3"), "Top element should be at position 1");
++        assertEquals(2, stack.search("Element 2"), "Element 2 should be at position 2");
++        assertEquals(3, stack.search("Element 1"), "Element 1 should be at position 3");
++        assertEquals(-1, stack.search("Non-existent"), "Non-existent element should return -1");
++
++        // 5. Peek at specific positions
++        assertEquals("Element 3", stack.peek(0), "Peek at 0 should be top element");
++        assertEquals("Element 2", stack.peek(1), "Peek at 1 should be second element");
++        assertEquals("Element 1", stack.peek(2), "Peek at 2 should be third element");
++
++        // 6. Pop elements in LIFO order
++        assertEquals("Element 3", stack.pop(), "First pop should return 'Element 3'");
++        assertEquals("Element 2", stack.pop(), "Second pop should return 'Element 2'");
++        assertEquals("Element 1", stack.pop(), "Third pop should return 'Element 1'");
++
++        assertTrue(stack.empty(), "Stack should be empty after all pops");
++        assertEquals(0, stack.size(), "Stack size should be 0 after all pops");
++
++        // 7. Try to pop from empty stack should throw exception
++        assertThrows(EmptyStackException.class, () -> stack.pop());
++        assertThrows(EmptyStackException.class, () -> stack.peek());
++    }
++
++    @Test
++    void testNullElementHandlingFlow() {
++        // 1. Create stack and push null elements
++        final ArrayStack<String> stack = new ArrayStack<>();
++        stack.push(null);
++        stack.push("First");
++        stack.push(null);
++        stack.push("Second");
++
++        // 2. Verify stack state
++        assertEquals(4, stack.size(), "Stack size should be 4");
++        assertEquals("Second", stack.peek(), "Top element should be 'Second'");
++
++        // 3. Search for null elements
++        assertEquals(1, stack.search(null), "First null should be found at position 1");
++
++        // 4. Pop elements and verify
++        assertEquals("Second", stack.pop(), "First pop should return 'Second'");
++        assertEquals(null, stack.pop(), "Second pop should return null");
++        assertEquals("First", stack.pop(), "Third pop should return 'First'");
++        assertEquals(null, stack.pop(), "Fourth pop should return null");
++
++        assertTrue(stack.empty());
++    }
++
++    @Test
++    void testInitialCapacityFlow() {
++        // 1. Create stack with initial capacity
++        final ArrayStack<Integer> stack = new ArrayStack<>(10);
++        assertTrue(stack.empty(), "Stack should be empty initially");
++
++        // 2. Push elements beyond initial capacity
++        for (int i = 0; i < 15; i++) {
++            stack.push(i);
++        }
++
++        assertEquals(15, stack.size(), "Stack should have 15 elements");
++
++        // 3. Pop all elements and verify order
++        for (int i = 14; i >= 0; i--) {
++            assertEquals(i, stack.pop(), "Pop should return " + i);
++        }
++
++        assertTrue(stack.empty(), "Stack should be empty after all pops");
++    }
++
++    @Test
++    void testMixedOperationsFlow() {
++        // 1. Create stack and do mixed operations
++        final ArrayStack<String> stack = new ArrayStack<>();
++
++        // Push initial elements
++        stack.push("A");
++        stack.push("B");
++        assertEquals(2, stack.size(), "Stack size should be 2");
++
++        // Pop and peek
++        assertEquals("B", stack.pop());
++        assertEquals("A", stack.peek());
++
++        // Push more elements
++        stack.push("C");
++        stack.push("D");
++        stack.push("E");
++
++        // Verify state
++        assertEquals(4, stack.size(), "Stack size should be 4");
++        assertEquals("E", stack.peek(), "Top should be 'E'");
++
++        // Search
++        assertEquals(4, stack.search("A"), "A should be at position 4");
++        assertEquals(1, stack.search("E"), "E should be at position 1");
++
++        // Pop some elements
++        assertEquals("E", stack.pop());
++        assertEquals("D", stack.pop());
++        assertEquals(2, stack.size(), "Stack size should be 2");
++
++        // Clear and verify
++        stack.clear();
++        assertTrue(stack.empty(), "Stack should be empty after clear");
++        assertEquals(0, stack.size(), "Stack size should be 0 after clear");
++    }
++
++    @Test
++    void testIteratorFlow() {
++        // 1. Create stack and push elements
++        final ArrayStack<String> stack = new ArrayStack<>();
++        stack.push("First");
++        stack.push("Second");
++        stack.push("Third");
++
++        // 2. Iterate from bottom to top (not LIFO order)
++        final Iterator<String> iterator = stack.iterator();
++        assertTrue(iterator.hasNext());
++        assertEquals("First", iterator.next());
++        assertEquals("Second", iterator.next());
++        assertEquals("Third", iterator.next());
++        assertFalse(iterator.hasNext());
++
++        // 3. But pop is still LIFO
++        assertEquals("Third", stack.pop());
++        assertEquals("Second", stack.pop());
++        assertEquals("First", stack.pop());
++    }
++
++    @Test
++    void testRealWorldUseCase_BrowserHistory() {
++        // Simulate browser history using stack
++        final ArrayStack<String> backStack = new ArrayStack<>();
++        final ArrayStack<String> forwardStack = new ArrayStack<>();
++        String currentUrl = "https://www.example.com";
++
++        // User navigates to multiple pages
++        backStack.push(currentUrl);
++        currentUrl = "https://www.example.com/page1";
++        backStack.push(currentUrl);
++        currentUrl = "https://www.example.com/page2";
++        backStack.push(currentUrl);
++        currentUrl = "https://www.example.com/page3";
++
++        // Verify back stack
++        assertEquals(3, backStack.size());
++
++        // User hits back button
++        forwardStack.push(currentUrl);
++        currentUrl = backStack.pop();
++        assertEquals("https://www.example.com/page2", currentUrl);
++
++        forwardStack.push(currentUrl);
++        currentUrl = backStack.pop();
++        assertEquals("https://www.example.com/page1", currentUrl);
++
++        // User hits forward button
++        backStack.push(currentUrl);
++        currentUrl = forwardStack.pop();
++        assertEquals("https://www.example.com/page2", currentUrl);
++
++        // Verify final states
++        assertEquals(2, backStack.size());
++        assertEquals(1, forwardStack.size());
++    }
++
++    @Test
++    void testRealWorldUseCase_UndoFunctionality() {
++        // Simulate undo functionality using stack
++        final ArrayStack<String> actionStack = new ArrayStack<>();
++        final ArrayStack<String> redoStack = new ArrayStack<>();
++
++        // Perform actions
++        actionStack.push("Type 'Hello'");
++        actionStack.push("Type ' World'");
++        actionStack.push("Delete last character");
++
++        assertEquals(3, actionStack.size());
++
++        // Undo actions
++        redoStack.push(actionStack.pop());
++        assertEquals("Delete last character", redoStack.peek());
++
++        redoStack.push(actionStack.pop());
++        assertEquals("Type ' World'", redoStack.peek());
++
++        // Redo
++        actionStack.push(redoStack.pop());
++        assertEquals("Type ' World'", actionStack.peek());
++
++        // Verify final state
++        assertEquals(2, actionStack.size());
++        assertEquals(1, redoStack.size());
++    }
++}
