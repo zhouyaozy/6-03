@@ -80,6 +80,14 @@ public class ArrayStack<E> extends ArrayList<E> {
         return isEmpty();
     }
 
+    private int topIndex(final int n) {
+        final int m = size() - n - 1;
+        if (m < 0) {
+            throw new EmptyStackException();
+        }
+        return m;
+    }
+
     /**
      * Returns the top item off of this stack without removing it.
      *
@@ -87,11 +95,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return get(n - 1);
+        return get(topIndex(0));
     }
 
     /**
@@ -104,11 +108,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
-        final int m = size() - n - 1;
-        if (m < 0) {
-            throw new EmptyStackException();
-        }
-        return get(m);
+        return get(topIndex(n));
     }
 
     /**
@@ -118,11 +118,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return remove(n - 1);
+        return remove(topIndex(0));
     }
 
     /**
@@ -149,12 +145,10 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
+        int i = size() - 1;
+        int n = 1;
         while (i >= 0) {
-            final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
+            if (ArrayUtils.nullSafeEquals(object, get(i))) {
                 return n;
             }
             i--;

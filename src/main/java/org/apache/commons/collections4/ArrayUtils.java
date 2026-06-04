@@ -36,6 +36,13 @@ package org.apache.commons.collections4;
  */
 final class ArrayUtils {
 
+    static boolean nullSafeEquals(final Object o1, final Object o2) {
+        if (o1 == null) {
+            return o2 == null;
+        }
+        return o1.equals(o2);
+    }
+
     /**
      * <p>
      * Checks if the object is in the given array.
@@ -76,17 +83,9 @@ final class ArrayUtils {
         if (startIndex < 0) {
             startIndex = 0;
         }
-        if (objectToFind == null) {
-            for (int i = startIndex; i < array.length; i++) {
-                if (array[i] == null) {
-                    return i;
-                }
-            }
-        } else {
-            for (int i = startIndex; i < array.length; i++) {
-                if (objectToFind.equals(array[i])) {
-                    return i;
-                }
+        for (int i = startIndex; i < array.length; i++) {
+            if (nullSafeEquals(objectToFind, array[i])) {
+                return i;
             }
         }
         return CollectionUtils.INDEX_NOT_FOUND;

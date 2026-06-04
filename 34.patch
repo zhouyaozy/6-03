@@ -1,0 +1,113 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..39ca7b8de 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -80,6 +80,14 @@ public class ArrayStack<E> extends ArrayList<E> {
+         return isEmpty();
+     }
+ 
++    private int topIndex(final int n) {
++        final int m = size() - n - 1;
++        if (m < 0) {
++            throw new EmptyStackException();
++        }
++        return m;
++    }
++
+     /**
+      * Returns the top item off of this stack without removing it.
+      *
+@@ -87,11 +95,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E peek() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(n - 1);
++        return get(topIndex(0));
+     }
+ 
+     /**
+@@ -104,11 +108,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *  stack to satisfy this request
+      */
+     public E peek(final int n) throws EmptyStackException {
+-        final int m = size() - n - 1;
+-        if (m < 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(m);
++        return get(topIndex(n));
+     }
+ 
+     /**
+@@ -118,11 +118,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E pop() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return remove(n - 1);
++        return remove(topIndex(0));
+     }
+ 
+     /**
+@@ -149,12 +145,10 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the 1-based depth into the stack of the object, or -1 if not found
+      */
+     public int search(final Object object) {
+-        int i = size() - 1;        // Current index
+-        int n = 1;                 // Current distance
++        int i = size() - 1;
++        int n = 1;
+         while (i >= 0) {
+-            final Object current = get(i);
+-            if (object == null && current == null ||
+-                object != null && object.equals(current)) {
++            if (ArrayUtils.nullSafeEquals(object, get(i))) {
+                 return n;
+             }
+             i--;
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayUtils.java b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+index 8fdbab144..8bef050ae 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayUtils.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+@@ -36,6 +36,13 @@ package org.apache.commons.collections4;
+  */
+ final class ArrayUtils {
+ 
++    static boolean nullSafeEquals(final Object o1, final Object o2) {
++        if (o1 == null) {
++            return o2 == null;
++        }
++        return o1.equals(o2);
++    }
++
+     /**
+      * <p>
+      * Checks if the object is in the given array.
+@@ -76,17 +83,9 @@ final class ArrayUtils {
+         if (startIndex < 0) {
+             startIndex = 0;
+         }
+-        if (objectToFind == null) {
+-            for (int i = startIndex; i < array.length; i++) {
+-                if (array[i] == null) {
+-                    return i;
+-                }
+-            }
+-        } else {
+-            for (int i = startIndex; i < array.length; i++) {
+-                if (objectToFind.equals(array[i])) {
+-                    return i;
+-                }
++        for (int i = startIndex; i < array.length; i++) {
++            if (nullSafeEquals(objectToFind, array[i])) {
++                return i;
+             }
+         }
+         return CollectionUtils.INDEX_NOT_FOUND;
