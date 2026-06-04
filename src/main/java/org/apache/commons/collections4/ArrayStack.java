@@ -49,6 +49,9 @@ public class ArrayStack<E> extends ArrayList<E> {
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
 
+    private transient ArrayUtils.RateLimiter rateLimiter;
+    private transient ArrayUtils.CircuitBreaker circuitBreaker;
+
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
      * is controlled by {@code ArrayList} and is currently 10.
@@ -68,6 +71,50 @@ public class ArrayStack<E> extends ArrayList<E> {
     }
 
     /**
+     * Enables rate limiting for this stack.
+     *
+     * @param maxRequests  the maximum number of requests allowed in the time window
+     * @param windowMillis the time window in milliseconds
+     */
+    public void enableRateLimiting(final int maxRequests, final long windowMillis) {
+        this.rateLimiter = new ArrayUtils.RateLimiter(maxRequests, windowMillis);
+    }
+
+    /**
+     * Enables circuit breaker for this stack.
+     *
+     * @param failureThreshold   the number of consecutive failures before opening the circuit
+     * @param resetTimeoutMillis the timeout in milliseconds before attempting to reset the circuit
+     */
+    public void enableCircuitBreaker(final int failureThreshold, final long resetTimeoutMillis) {
+        this.circuitBreaker = new ArrayUtils.CircuitBreaker(failureThreshold, resetTimeoutMillis);
+    }
+
+    private void checkRateLimit() {
+        if (rateLimiter != null) {
+            rateLimiter.acquire();
+        }
+    }
+
+    private void checkCircuitBreaker() {
+        if (circuitBreaker != null) {
+            circuitBreaker.check();
+        }
+    }
+
+    private void recordSuccess() {
+        if (circuitBreaker != null) {
+            circuitBreaker.recordSuccess();
+        }
+    }
+
+    private void recordFailure() {
+        if (circuitBreaker != null) {
+            circuitBreaker.recordFailure();
+        }
+    }
+
+    /**
      * Return {@code true} if this stack is currently empty.
      * <p>
      * This method exists for compatibility with {@link java.util.Stack}.
@@ -77,7 +124,11 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return true if the stack is currently empty
      */
     public boolean empty() {
-        return isEmpty();
+        checkRateLimit();
+        checkCircuitBreaker();
+        final boolean result = isEmpty();
+        recordSuccess();
+        return result;
     }
 
     /**
@@ -87,11 +138,16 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
+        checkRateLimit();
+        checkCircuitBreaker();
         final int n = size();
         if (n <= 0) {
+            recordFailure();
             throw new EmptyStackException();
         }
-        return get(n - 1);
+        final E result = get(n - 1);
+        recordSuccess();
+        return result;
     }
 
     /**
@@ -104,11 +160,16 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
+        checkRateLimit();
+        checkCircuitBreaker();
         final int m = size() - n - 1;
         if (m < 0) {
+            recordFailure();
             throw new EmptyStackException();
         }
-        return get(m);
+        final E result = get(m);
+        recordSuccess();
+        return result;
     }
 
     /**
@@ -118,11 +179,16 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
+        checkRateLimit();
+        checkCircuitBreaker();
         final int n = size();
         if (n <= 0) {
+            recordFailure();
             throw new EmptyStackException();
         }
-        return remove(n - 1);
+        final E result = remove(n - 1);
+        recordSuccess();
+        return result;
     }
 
     /**
@@ -133,7 +199,10 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the item just pushed
      */
     public E push(final E item) {
+        checkRateLimit();
+        checkCircuitBreaker();
         add(item);
+        recordSuccess();
         return item;
     }
 
@@ -149,17 +218,21 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
+        checkRateLimit();
+        checkCircuitBreaker();
         int i = size() - 1;        // Current index
         int n = 1;                 // Current distance
         while (i >= 0) {
             final Object current = get(i);
             if (object == null && current == null ||
                 object != null && object.equals(current)) {
+                recordSuccess();
                 return n;
             }
             i--;
             n++;
         }
+        recordSuccess();
         return -1;
     }
 

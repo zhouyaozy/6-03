@@ -109,6 +109,76 @@ final class ArrayUtils {
     }
 
     /**
+     * A simple RateLimiter for collections.
+     */
+    static class RateLimiter {
+        private final int maxRequests;
+        private final long windowMillis;
+        private long windowStart;
+        private int requestCount;
+
+        RateLimiter(final int maxRequests, final long windowMillis) {
+            this.maxRequests = maxRequests;
+            this.windowMillis = windowMillis;
+            this.windowStart = System.currentTimeMillis();
+            this.requestCount = 0;
+        }
+
+        synchronized void acquire() {
+            final long now = System.currentTimeMillis();
+            if (now - windowStart > windowMillis) {
+                windowStart = now;
+                requestCount = 0;
+            }
+            if (requestCount >= maxRequests) {
+                throw new IllegalStateException("Rate limit exceeded");
+            }
+            requestCount++;
+        }
+    }
+
+    /**
+     * A simple CircuitBreaker for collections.
+     */
+    static class CircuitBreaker {
+        private final int failureThreshold;
+        private final long resetTimeoutMillis;
+        private int failureCount;
+        private long lastFailureTime;
+        private State state = State.CLOSED;
+
+        enum State { CLOSED, OPEN, HALF_OPEN }
+
+        CircuitBreaker(final int failureThreshold, final long resetTimeoutMillis) {
+            this.failureThreshold = failureThreshold;
+            this.resetTimeoutMillis = resetTimeoutMillis;
+        }
+
+        synchronized void check() {
+            if (state == State.OPEN) {
+                if (System.currentTimeMillis() - lastFailureTime > resetTimeoutMillis) {
+                    state = State.HALF_OPEN;
+                } else {
+                    throw new IllegalStateException("Circuit breaker is open");
+                }
+            }
+        }
+
+        synchronized void recordSuccess() {
+            failureCount = 0;
+            state = State.CLOSED;
+        }
+
+        synchronized void recordFailure() {
+            failureCount++;
+            if (failureCount >= failureThreshold) {
+                state = State.OPEN;
+                lastFailureTime = System.currentTimeMillis();
+            }
+        }
+    }
+
+    /**
      * Don't allow instances.
      */
     private ArrayUtils() {
