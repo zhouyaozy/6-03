@@ -18,6 +18,7 @@ package org.apache.commons.collections4;
 
 import java.util.ArrayList;
 import java.util.EmptyStackException;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * An implementation of the {@link java.util.Stack} API that is based on an
@@ -33,13 +34,21 @@ import java.util.EmptyStackException;
  * </p>
  * <p>
  * Unlike {@code Stack}, {@code ArrayStack} accepts null entries.
+ * </p>
  * <p>
  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
  * removed {@code Buffer} interface anymore.
  * </p>
+ * <p>
+ * Since version 4.6, this class supports optional rate limiting and circuit breaker
+ * integration. Use {@link #wrap(E, RateLimiter, CircuitBreaker)} to create a protected
+ * instance that guards operations against excessive load and cascading failures.
+ * </p>
  *
  * @param <E> the type of elements in this list
  * @see java.util.Stack
+ * @see RateLimiter
+ * @see CircuitBreaker
  * @since 1.0
  * @deprecated Use {@link java.util.ArrayDeque} instead (available from Java 1.6)
  */
@@ -49,11 +58,22 @@ public class ArrayStack<E> extends ArrayList<E> {
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
 
+    private final RateLimiter rateLimiter;
+    private final CircuitBreaker circuitBreaker;
+    private final AtomicLong rejectedCount;
+    private final AtomicLong throttledCount;
+    private final AtomicLong circuitOpenCount;
+
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
      * is controlled by {@code ArrayList} and is currently 10.
      */
     public ArrayStack() {
+        this.rateLimiter = null;
+        this.circuitBreaker = null;
+        this.rejectedCount = new AtomicLong(0);
+        this.throttledCount = new AtomicLong(0);
+        this.circuitOpenCount = new AtomicLong(0);
     }
 
     /**
@@ -65,6 +85,44 @@ public class ArrayStack<E> extends ArrayList<E> {
      */
     public ArrayStack(final int initialSize) {
         super(initialSize);
+        this.rateLimiter = null;
+        this.circuitBreaker = null;
+        this.rejectedCount = new AtomicLong(0);
+        this.throttledCount = new AtomicLong(0);
+        this.circuitOpenCount = new AtomicLong(0);
+    }
+
+    /**
+     * Constructs a new empty {@code ArrayStack} with rate limiting and circuit breaker protections.
+     *
+     * @param rateLimiter    the rate limiter to use, may be {@code null}
+     * @param circuitBreaker the circuit breaker to use, may be {@code null}
+     * @since 4.6
+     */
+    public ArrayStack(final RateLimiter rateLimiter, final CircuitBreaker circuitBreaker) {
+        this.rateLimiter = rateLimiter;
+        this.circuitBreaker = circuitBreaker;
+        this.rejectedCount = new AtomicLong(0);
+        this.throttledCount = new AtomicLong(0);
+        this.circuitOpenCount = new AtomicLong(0);
+    }
+
+    /**
+     * Constructs a new empty {@code ArrayStack} with an initial size and protections.
+     *
+     * @param initialSize    the initial size to use
+     * @param rateLimiter    the rate limiter to use, may be {@code null}
+     * @param circuitBreaker the circuit breaker to use, may be {@code null}
+     * @throws IllegalArgumentException if the specified initial size is negative
+     * @since 4.6
+     */
+    public ArrayStack(final int initialSize, final RateLimiter rateLimiter, final CircuitBreaker circuitBreaker) {
+        super(initialSize);
+        this.rateLimiter = rateLimiter;
+        this.circuitBreaker = circuitBreaker;
+        this.rejectedCount = new AtomicLong(0);
+        this.throttledCount = new AtomicLong(0);
+        this.circuitOpenCount = new AtomicLong(0);
     }
 
     /**
@@ -161,6 +219,199 @@ public class ArrayStack<E> extends ArrayList<E> {
             n++;
         }
         return -1;
+    }
+
+    /**
+     * Pushes a new item onto the top of this stack with rate limiting and circuit breaker checks.
+     * This is equivalent to calling {@link #push(Object)} when no protections are configured.
+     * <p>
+     * When a {@link RateLimiter} is configured, the call is subject to rate limiting.
+     * When a {@link CircuitBreaker} is configured, the call may be rejected if the circuit is open.
+     * </p>
+     *
+     * @param item  the item to be added
+     * @return the item just pushed, or {@code null} if the operation was rejected
+     * @since 4.6
+     */
+    public E pushProtected(final E item) {
+        if (!allowRequest()) {
+            return null;
+        }
+        return push(item);
+    }
+
+    /**
+     * Pops the top item off of this stack with rate limiting and circuit breaker checks.
+     *
+     * @return the top item on the stack, or {@code null} if the operation was rejected
+     * @throws EmptyStackException  if the stack is empty
+     * @since 4.6
+     */
+    public E popProtected() throws EmptyStackException {
+        if (!allowRequest()) {
+            return null;
+        }
+        return pop();
+    }
+
+    /**
+     * Returns the top item without removing it, with rate limiting and circuit breaker checks.
+     *
+     * @return the top item on the stack, or {@code null} if the operation was rejected
+     * @throws EmptyStackException  if the stack is empty
+     * @since 4.6
+     */
+    public E peekProtected() throws EmptyStackException {
+        if (!allowRequest()) {
+            return null;
+        }
+        return peek();
+    }
+
+    /**
+     * Returns the n'th item down from the top with rate limiting and circuit breaker checks.
+     *
+     * @param n  the number of items down to go
+     * @return the n'th item on the stack, zero relative, or {@code null} if rejected
+     * @throws EmptyStackException  if there are not enough items on the stack
+     * @since 4.6
+     */
+    public E peekProtected(final int n) throws EmptyStackException {
+        if (!allowRequest()) {
+            return null;
+        }
+        return peek(n);
+    }
+
+    /**
+     * Checks whether the current operation is allowed by the configured rate limiter
+     * and circuit breaker. Increments the appropriate rejection counters.
+     *
+     * @return {@code true} if the request is allowed to proceed
+     * @since 4.6
+     */
+    public boolean allowRequest() {
+        if (circuitBreaker != null && !circuitBreaker.allowRequest()) {
+            circuitOpenCount.incrementAndGet();
+            rejectedCount.incrementAndGet();
+            return false;
+        }
+        if (rateLimiter != null && !rateLimiter.tryAcquire()) {
+            throttledCount.incrementAndGet();
+            rejectedCount.incrementAndGet();
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Notifies the circuit breaker of a successful operation.
+     * Call this after a protected operation completes successfully.
+     *
+     * @since 4.6
+     */
+    public void recordSuccess() {
+        if (circuitBreaker != null) {
+            circuitBreaker.recordSuccess();
+        }
+    }
+
+    /**
+     * Notifies the circuit breaker of a failed operation.
+     * Call this after a protected operation throws an exception or fails.
+     *
+     * @since 4.6
+     */
+    public void recordFailure() {
+        if (circuitBreaker != null) {
+            circuitBreaker.recordFailure();
+        }
+    }
+
+    /**
+     * Returns the configured rate limiter, or {@code null} if none is configured.
+     *
+     * @return the rate limiter, or {@code null}
+     * @since 4.6
+     */
+    public RateLimiter getRateLimiter() {
+        return rateLimiter;
+    }
+
+    /**
+     * Returns the configured circuit breaker, or {@code null} if none is configured.
+     *
+     * @return the circuit breaker, or {@code null}
+     * @since 4.6
+     */
+    public CircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
+    /**
+     * Returns the total number of rejected requests due to rate limiting or circuit breaker.
+     *
+     * @return the rejected request count
+     * @since 4.6
+     */
+    public long getRejectedCount() {
+        return rejectedCount.get();
+    }
+
+    /**
+     * Returns the number of requests throttled by the rate limiter.
+     *
+     * @return the throttled request count
+     * @since 4.6
+     */
+    public long getThrottledCount() {
+        return throttledCount.get();
+    }
+
+    /**
+     * Returns the number of requests rejected due to an open circuit.
+     *
+     * @return the circuit-open rejection count
+     * @since 4.6
+     */
+    public long getCircuitOpenCount() {
+        return circuitOpenCount.get();
+    }
+
+    /**
+     * Resets all rejection counters to zero.
+     *
+     * @since 4.6
+     */
+    public void resetCounters() {
+        rejectedCount.set(0);
+        throttledCount.set(0);
+        circuitOpenCount.set(0);
+    }
+
+    /**
+     * Returns a summary of the stack's protection status.
+     *
+     * @return a string summarizing rate limiter and circuit breaker status
+     * @since 4.6
+     */
+    public String getStatus() {
+        final StringBuilder sb = new StringBuilder("ArrayStack[");
+        sb.append("size=").append(size());
+        sb.append(", rejected=").append(rejectedCount.get());
+        sb.append(", throttled=").append(throttledCount.get());
+        sb.append(", circuitOpen=").append(circuitOpenCount.get());
+        if (rateLimiter != null) {
+            sb.append(", rateLimit=").append(rateLimiter.getRate()).append("/s");
+            sb.append(", available=").append(String.format("%.1f", rateLimiter.availablePermits()));
+        }
+        if (circuitBreaker != null) {
+            sb.append(", circuitState=").append(circuitBreaker.getState());
+            sb.append(", circuitFailures=").append(circuitBreaker.getFailureCount());
+            sb.append(", circuitSuccesses=").append(circuitBreaker.getSuccessCount());
+        }
+        sb.append("]");
+        return sb.toString();
     }
 
 }

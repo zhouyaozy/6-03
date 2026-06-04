@@ -1,0 +1,755 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..b666cd19c 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -18,6 +18,7 @@ package org.apache.commons.collections4;
+ 
+ import java.util.ArrayList;
+ import java.util.EmptyStackException;
++import java.util.concurrent.atomic.AtomicLong;
+ 
+ /**
+  * An implementation of the {@link java.util.Stack} API that is based on an
+@@ -33,13 +34,21 @@ import java.util.EmptyStackException;
+  * </p>
+  * <p>
+  * Unlike {@code Stack}, {@code ArrayStack} accepts null entries.
++ * </p>
+  * <p>
+  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
+  * removed {@code Buffer} interface anymore.
+  * </p>
++ * <p>
++ * Since version 4.6, this class supports optional rate limiting and circuit breaker
++ * integration. Use {@link #wrap(E, RateLimiter, CircuitBreaker)} to create a protected
++ * instance that guards operations against excessive load and cascading failures.
++ * </p>
+  *
+  * @param <E> the type of elements in this list
+  * @see java.util.Stack
++ * @see RateLimiter
++ * @see CircuitBreaker
+  * @since 1.0
+  * @deprecated Use {@link java.util.ArrayDeque} instead (available from Java 1.6)
+  */
+@@ -49,11 +58,22 @@ public class ArrayStack<E> extends ArrayList<E> {
+     /** Ensure serialization compatibility */
+     private static final long serialVersionUID = 2130079159931574599L;
+ 
++    private final RateLimiter rateLimiter;
++    private final CircuitBreaker circuitBreaker;
++    private final AtomicLong rejectedCount;
++    private final AtomicLong throttledCount;
++    private final AtomicLong circuitOpenCount;
++
+     /**
+      * Constructs a new empty {@code ArrayStack}. The initial size
+      * is controlled by {@code ArrayList} and is currently 10.
+      */
+     public ArrayStack() {
++        this.rateLimiter = null;
++        this.circuitBreaker = null;
++        this.rejectedCount = new AtomicLong(0);
++        this.throttledCount = new AtomicLong(0);
++        this.circuitOpenCount = new AtomicLong(0);
+     }
+ 
+     /**
+@@ -65,6 +85,44 @@ public class ArrayStack<E> extends ArrayList<E> {
+      */
+     public ArrayStack(final int initialSize) {
+         super(initialSize);
++        this.rateLimiter = null;
++        this.circuitBreaker = null;
++        this.rejectedCount = new AtomicLong(0);
++        this.throttledCount = new AtomicLong(0);
++        this.circuitOpenCount = new AtomicLong(0);
++    }
++
++    /**
++     * Constructs a new empty {@code ArrayStack} with rate limiting and circuit breaker protections.
++     *
++     * @param rateLimiter    the rate limiter to use, may be {@code null}
++     * @param circuitBreaker the circuit breaker to use, may be {@code null}
++     * @since 4.6
++     */
++    public ArrayStack(final RateLimiter rateLimiter, final CircuitBreaker circuitBreaker) {
++        this.rateLimiter = rateLimiter;
++        this.circuitBreaker = circuitBreaker;
++        this.rejectedCount = new AtomicLong(0);
++        this.throttledCount = new AtomicLong(0);
++        this.circuitOpenCount = new AtomicLong(0);
++    }
++
++    /**
++     * Constructs a new empty {@code ArrayStack} with an initial size and protections.
++     *
++     * @param initialSize    the initial size to use
++     * @param rateLimiter    the rate limiter to use, may be {@code null}
++     * @param circuitBreaker the circuit breaker to use, may be {@code null}
++     * @throws IllegalArgumentException if the specified initial size is negative
++     * @since 4.6
++     */
++    public ArrayStack(final int initialSize, final RateLimiter rateLimiter, final CircuitBreaker circuitBreaker) {
++        super(initialSize);
++        this.rateLimiter = rateLimiter;
++        this.circuitBreaker = circuitBreaker;
++        this.rejectedCount = new AtomicLong(0);
++        this.throttledCount = new AtomicLong(0);
++        this.circuitOpenCount = new AtomicLong(0);
+     }
+ 
+     /**
+@@ -163,4 +221,197 @@ public class ArrayStack<E> extends ArrayList<E> {
+         return -1;
+     }
+ 
++    /**
++     * Pushes a new item onto the top of this stack with rate limiting and circuit breaker checks.
++     * This is equivalent to calling {@link #push(Object)} when no protections are configured.
++     * <p>
++     * When a {@link RateLimiter} is configured, the call is subject to rate limiting.
++     * When a {@link CircuitBreaker} is configured, the call may be rejected if the circuit is open.
++     * </p>
++     *
++     * @param item  the item to be added
++     * @return the item just pushed, or {@code null} if the operation was rejected
++     * @since 4.6
++     */
++    public E pushProtected(final E item) {
++        if (!allowRequest()) {
++            return null;
++        }
++        return push(item);
++    }
++
++    /**
++     * Pops the top item off of this stack with rate limiting and circuit breaker checks.
++     *
++     * @return the top item on the stack, or {@code null} if the operation was rejected
++     * @throws EmptyStackException  if the stack is empty
++     * @since 4.6
++     */
++    public E popProtected() throws EmptyStackException {
++        if (!allowRequest()) {
++            return null;
++        }
++        return pop();
++    }
++
++    /**
++     * Returns the top item without removing it, with rate limiting and circuit breaker checks.
++     *
++     * @return the top item on the stack, or {@code null} if the operation was rejected
++     * @throws EmptyStackException  if the stack is empty
++     * @since 4.6
++     */
++    public E peekProtected() throws EmptyStackException {
++        if (!allowRequest()) {
++            return null;
++        }
++        return peek();
++    }
++
++    /**
++     * Returns the n'th item down from the top with rate limiting and circuit breaker checks.
++     *
++     * @param n  the number of items down to go
++     * @return the n'th item on the stack, zero relative, or {@code null} if rejected
++     * @throws EmptyStackException  if there are not enough items on the stack
++     * @since 4.6
++     */
++    public E peekProtected(final int n) throws EmptyStackException {
++        if (!allowRequest()) {
++            return null;
++        }
++        return peek(n);
++    }
++
++    /**
++     * Checks whether the current operation is allowed by the configured rate limiter
++     * and circuit breaker. Increments the appropriate rejection counters.
++     *
++     * @return {@code true} if the request is allowed to proceed
++     * @since 4.6
++     */
++    public boolean allowRequest() {
++        if (circuitBreaker != null && !circuitBreaker.allowRequest()) {
++            circuitOpenCount.incrementAndGet();
++            rejectedCount.incrementAndGet();
++            return false;
++        }
++        if (rateLimiter != null && !rateLimiter.tryAcquire()) {
++            throttledCount.incrementAndGet();
++            rejectedCount.incrementAndGet();
++            return false;
++        }
++        return true;
++    }
++
++    /**
++     * Notifies the circuit breaker of a successful operation.
++     * Call this after a protected operation completes successfully.
++     *
++     * @since 4.6
++     */
++    public void recordSuccess() {
++        if (circuitBreaker != null) {
++            circuitBreaker.recordSuccess();
++        }
++    }
++
++    /**
++     * Notifies the circuit breaker of a failed operation.
++     * Call this after a protected operation throws an exception or fails.
++     *
++     * @since 4.6
++     */
++    public void recordFailure() {
++        if (circuitBreaker != null) {
++            circuitBreaker.recordFailure();
++        }
++    }
++
++    /**
++     * Returns the configured rate limiter, or {@code null} if none is configured.
++     *
++     * @return the rate limiter, or {@code null}
++     * @since 4.6
++     */
++    public RateLimiter getRateLimiter() {
++        return rateLimiter;
++    }
++
++    /**
++     * Returns the configured circuit breaker, or {@code null} if none is configured.
++     *
++     * @return the circuit breaker, or {@code null}
++     * @since 4.6
++     */
++    public CircuitBreaker getCircuitBreaker() {
++        return circuitBreaker;
++    }
++
++    /**
++     * Returns the total number of rejected requests due to rate limiting or circuit breaker.
++     *
++     * @return the rejected request count
++     * @since 4.6
++     */
++    public long getRejectedCount() {
++        return rejectedCount.get();
++    }
++
++    /**
++     * Returns the number of requests throttled by the rate limiter.
++     *
++     * @return the throttled request count
++     * @since 4.6
++     */
++    public long getThrottledCount() {
++        return throttledCount.get();
++    }
++
++    /**
++     * Returns the number of requests rejected due to an open circuit.
++     *
++     * @return the circuit-open rejection count
++     * @since 4.6
++     */
++    public long getCircuitOpenCount() {
++        return circuitOpenCount.get();
++    }
++
++    /**
++     * Resets all rejection counters to zero.
++     *
++     * @since 4.6
++     */
++    public void resetCounters() {
++        rejectedCount.set(0);
++        throttledCount.set(0);
++        circuitOpenCount.set(0);
++    }
++
++    /**
++     * Returns a summary of the stack's protection status.
++     *
++     * @return a string summarizing rate limiter and circuit breaker status
++     * @since 4.6
++     */
++    public String getStatus() {
++        final StringBuilder sb = new StringBuilder("ArrayStack[");
++        sb.append("size=").append(size());
++        sb.append(", rejected=").append(rejectedCount.get());
++        sb.append(", throttled=").append(throttledCount.get());
++        sb.append(", circuitOpen=").append(circuitOpenCount.get());
++        if (rateLimiter != null) {
++            sb.append(", rateLimit=").append(rateLimiter.getRate()).append("/s");
++            sb.append(", available=").append(String.format("%.1f", rateLimiter.availablePermits()));
++        }
++        if (circuitBreaker != null) {
++            sb.append(", circuitState=").append(circuitBreaker.getState());
++            sb.append(", circuitFailures=").append(circuitBreaker.getFailureCount());
++            sb.append(", circuitSuccesses=").append(circuitBreaker.getSuccessCount());
++        }
++        sb.append("]");
++        return sb.toString();
++    }
++
+ }
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayUtils.java b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+index 8fdbab144..f3a1c7e20 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayUtils.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+@@ -108,6 +108,68 @@ final class ArrayUtils {
+         return indexOf(array, objectToFind, 0);
+     }
+ 
++    /**
++     * Computes the rate per second from a count and elapsed time.
++     *
++     * @param count      the operation count
++     * @param elapsedMs  the elapsed time in milliseconds
++     * @return the rate per second, or 0 if elapsedMs is 0
++     * @throws IllegalArgumentException if count or elapsedMs is negative
++     * @since 4.6
++     */
++    static double calculateRate(final long count, final long elapsedMs) {
++        if (count < 0) {
++            throw new IllegalArgumentException("count must not be negative: " + count);
++        }
++        if (elapsedMs < 0) {
++            throw new IllegalArgumentException("elapsedMs must not be negative: " + elapsedMs);
++        }
++        if (elapsedMs == 0) {
++            return 0.0;
++        }
++        return (double) count / elapsedMs * 1000.0;
++    }
++
++    /**
++     * Calculates the maximum permitted operation count for a given rate
++     * and time window without exceeding the rate limit.
++     *
++     * @param ratePerSecond  the allowed rate per second
++     * @param windowMs       the time window in milliseconds
++     * @return the maximum number of operations permitted in the window, at least 0
++     * @throws IllegalArgumentException if rate or window is negative
++     * @since 4.6
++     */
++    static long calculatePermittedCount(final double ratePerSecond, final long windowMs) {
++        if (ratePerSecond < 0) {
++            throw new IllegalArgumentException("ratePerSecond must not be negative: " + ratePerSecond);
++        }
++        if (windowMs < 0) {
++            throw new IllegalArgumentException("windowMs must not be negative: " + windowMs);
++        }
++        return Math.max(0, (long) (ratePerSecond * windowMs / 1000.0));
++    }
++
++    /**
++     * Checks whether all elements in the array are non-null.
++     *
++     * @param array  the array to check, may be {@code null}
++     * @param <T>    the type of elements
++     * @return {@code true} if the array is non-null and all elements are non-null
++     * @since 4.6
++     */
++    static <T> boolean allNonNull(final T[] array) {
++        if (array == null) {
++            return false;
++        }
++        for (final T element : array) {
++            if (element == null) {
++                return false;
++            }
++        }
++        return true;
++    }
++
+     /**
+      * Don't allow instances.
+      */
+diff --git a/src/main/java/org/apache/commons/collections4/CircuitBreaker.java b/src/main/java/org/apache/commons/collections4/CircuitBreaker.java
+new file mode 100644
+index 000000000..3375b81f6
+--- /dev/null
++++ b/src/main/java/org/apache/commons/collections4/CircuitBreaker.java
+@@ -0,0 +1,240 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++import java.util.concurrent.atomic.AtomicReference;
++
++/**
++ * A circuit breaker that protects against cascading failures by
++ * transitioning between CLOSED, OPEN, and HALF_OPEN states based on
++ * operation success and failure counts.
++ * <p>
++ * In the CLOSED state, operations are allowed normally. When the failure
++ * threshold is exceeded within the tracking window, the circuit opens.
++ * </p>
++ * <p>
++ * In the OPEN state, operations are rejected immediately for a configurable
++ * cooldown period. After the cooldown elapses, the circuit transitions to
++ * HALF_OPEN.
++ * </p>
++ * <p>
++ * In the HALF_OPEN state, a limited number of probe operations are allowed.
++ * If probes succeed, the circuit closes; if any probe fails, the circuit
++ * re-opens.
++ * </p>
++ * <p>
++ * Thread-safe.
++ * </p>
++ *
++ * @since 4.6
++ */
++public class CircuitBreaker {
++
++    /** Circuit breaker states. */
++    public enum State {
++        CLOSED,
++        OPEN,
++        HALF_OPEN
++    }
++
++    /** Nanoseconds per millisecond. */
++    private static final long NANOS_PER_MILLI = 1_000_000L;
++
++    private final int failureThreshold;
++    private final long cooldownMillis;
++    private final int halfOpenMaxProbes;
++    private final AtomicReference<Metrics> metrics;
++
++    /**
++     * Constructs a new {@code CircuitBreaker} with default half-open probe limit of 1.
++     *
++     * @param failureThreshold number of failures before opening the circuit
++     * @param cooldownMillis   milliseconds to wait before transitioning from OPEN to HALF_OPEN
++     * @throws IllegalArgumentException if any parameter is not positive
++     */
++    public CircuitBreaker(final int failureThreshold, final long cooldownMillis) {
++        this(failureThreshold, cooldownMillis, 1);
++    }
++
++    /**
++     * Constructs a new {@code CircuitBreaker}.
++     *
++     * @param failureThreshold   number of failures before opening the circuit
++     * @param cooldownMillis     milliseconds to wait before transitioning from OPEN to HALF_OPEN
++     * @param halfOpenMaxProbes  maximum number of probes allowed in HALF_OPEN state
++     * @throws IllegalArgumentException if any parameter is not positive
++     */
++    public CircuitBreaker(final int failureThreshold, final long cooldownMillis, final int halfOpenMaxProbes) {
++        if (failureThreshold <= 0) {
++            throw new IllegalArgumentException("failureThreshold must be positive: " + failureThreshold);
++        }
++        if (cooldownMillis <= 0) {
++            throw new IllegalArgumentException("cooldownMillis must be positive: " + cooldownMillis);
++        }
++        if (halfOpenMaxProbes <= 0) {
++            throw new IllegalArgumentException("halfOpenMaxProbes must be positive: " + halfOpenMaxProbes);
++        }
++        this.failureThreshold = failureThreshold;
++        this.cooldownMillis = cooldownMillis;
++        this.halfOpenMaxProbes = halfOpenMaxProbes;
++        this.metrics = new AtomicReference<>(new Metrics(0, 0, 0, 0, State.CLOSED));
++    }
++
++    /**
++     * Checks whether an operation is allowed to proceed.
++     *
++     * @return {@code true} if the operation can proceed, {@code false} if the circuit is open
++     */
++    public boolean allowRequest() {
++        while (true) {
++            final Metrics current = metrics.get();
++            switch (current.state) {
++            case CLOSED:
++                return true;
++            case OPEN:
++                final long elapsed = (System.nanoTime() - current.openedAtNanos) / NANOS_PER_MILLI;
++                if (elapsed >= cooldownMillis) {
++                    final Metrics halfOpen = new Metrics(0, 0, 0, System.nanoTime(), State.HALF_OPEN);
++                    if (metrics.compareAndSet(current, halfOpen)) {
++                        return true;
++                    }
++                    break;
++                }
++                return false;
++            case HALF_OPEN:
++                return current.probeCount < halfOpenMaxProbes;
++            default:
++                return false;
++            }
++        }
++    }
++
++    /**
++     * Records a successful operation.
++     */
++    public void recordSuccess() {
++        while (true) {
++            final Metrics current = metrics.get();
++            if (current.state == State.CLOSED) {
++                final Metrics updated = new Metrics(0, current.successCount + 1, 0, 0, State.CLOSED);
++                if (metrics.compareAndSet(current, updated)) {
++                    return;
++                }
++            } else if (current.state == State.HALF_OPEN) {
++                final int newProbes = current.probeCount + 1;
++                if (newProbes >= halfOpenMaxProbes) {
++                    final Metrics closed = new Metrics(0, current.successCount + 1, 0, 0, State.CLOSED);
++                    if (metrics.compareAndSet(current, closed)) {
++                        return;
++                    }
++                } else {
++                    final Metrics updated = new Metrics(0, current.successCount + 1, newProbes, current.openedAtNanos, State.HALF_OPEN);
++                    if (metrics.compareAndSet(current, updated)) {
++                        return;
++                    }
++                }
++            } else {
++                return;
++            }
++        }
++    }
++
++    /**
++     * Records a failed operation. If the failure threshold is reached in CLOSED state,
++     * the circuit opens. In HALF_OPEN state, a single failure re-opens the circuit.
++     */
++    public void recordFailure() {
++        while (true) {
++            final Metrics current = metrics.get();
++            if (current.state == State.CLOSED) {
++                final int newFailures = current.failureCount + 1;
++                if (newFailures >= failureThreshold) {
++                    final Metrics opened = new Metrics(newFailures, current.successCount, 0, System.nanoTime(), State.OPEN);
++                    if (metrics.compareAndSet(current, opened)) {
++                        return;
++                    }
++                } else {
++                    final Metrics updated = new Metrics(newFailures, current.successCount, 0, 0, State.CLOSED);
++                    if (metrics.compareAndSet(current, updated)) {
++                        return;
++                    }
++                }
++            } else if (current.state == State.HALF_OPEN) {
++                final Metrics opened = new Metrics(current.failureCount + 1, current.successCount, 0, System.nanoTime(), State.OPEN);
++                if (metrics.compareAndSet(current, opened)) {
++                    return;
++                }
++            } else {
++                return;
++            }
++        }
++    }
++
++    /**
++     * Returns the current state of the circuit breaker.
++     *
++     * @return the current state
++     */
++    public State getState() {
++        final Metrics current = metrics.get();
++        if (current.state == State.OPEN) {
++            final long elapsed = (System.nanoTime() - current.openedAtNanos) / NANOS_PER_MILLI;
++            if (elapsed >= cooldownMillis) {
++                return State.HALF_OPEN;
++            }
++        }
++        return current.state;
++    }
++
++    /**
++     * Returns the current failure count.
++     *
++     * @return the failure count
++     */
++    public int getFailureCount() {
++        return metrics.get().failureCount;
++    }
++
++    /**
++     * Returns the current success count.
++     *
++     * @return the success count
++     */
++    public int getSuccessCount() {
++        return metrics.get().successCount;
++    }
++
++    /**
++     * Immutable snapshot of the circuit breaker metrics.
++     */
++    private static final class Metrics {
++        final int failureCount;
++        final int successCount;
++        final int probeCount;
++        final long openedAtNanos;
++        final State state;
++
++        Metrics(final int failureCount, final int successCount, final int probeCount,
++                final long openedAtNanos, final State state) {
++            this.failureCount = failureCount;
++            this.successCount = successCount;
++            this.probeCount = probeCount;
++            this.openedAtNanos = openedAtNanos;
++            this.state = state;
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/src/main/java/org/apache/commons/collections4/RateLimiter.java b/src/main/java/org/apache/commons/collections4/RateLimiter.java
+new file mode 100644
+index 000000000..183c6048b
+--- /dev/null
++++ b/src/main/java/org/apache/commons/collections4/RateLimiter.java
+@@ -0,0 +1,128 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++import java.util.concurrent.atomic.AtomicReference;
++
++/**
++ * A token bucket based rate limiter providing configurable throughput control.
++ * <p>
++ * This implementation uses the token bucket algorithm: tokens are added at a fixed
++ * rate up to a maximum capacity. Each operation attempt consumes one token; if no
++ * token is available, the attempt is rejected.
++ * </p>
++ * <p>
++ * Thread-safe. Suitable for guarding resource access in concurrent environments.
++ * </p>
++ *
++ * @since 4.6
++ */
++public class RateLimiter {
++
++    /** Nanoseconds per second, used for time calculations. */
++    private static final long NANOS_PER_SECOND = 1_000_000_000L;
++
++    private final double permitsPerSecond;
++    private final double maxPermits;
++    private final AtomicReference<State> state;
++
++    /**
++     * Constructs a new {@code RateLimiter} with the specified rate.
++     *
++     * @param permitsPerSecond the steady-state rate at which permits are generated
++     * @throws IllegalArgumentException if {@code permitsPerSecond} is not positive
++     */
++    public RateLimiter(final double permitsPerSecond) {
++        this(permitsPerSecond, permitsPerSecond);
++    }
++
++    /**
++     * Constructs a new {@code RateLimiter} with the specified steady rate
++     * and burst capacity.
++     *
++     * @param permitsPerSecond the steady-state rate at which permits are generated
++     * @param maxBurstPermits  the maximum number of permits that can be stored
++     * @throws IllegalArgumentException if either parameter is not positive
++     */
++    public RateLimiter(final double permitsPerSecond, final double maxBurstPermits) {
++        if (permitsPerSecond <= 0.0) {
++            throw new IllegalArgumentException("permitsPerSecond must be positive: " + permitsPerSecond);
++        }
++        if (maxBurstPermits <= 0.0) {
++            throw new IllegalArgumentException("maxBurstPermits must be positive: " + maxBurstPermits);
++        }
++        this.permitsPerSecond = permitsPerSecond;
++        this.maxPermits = Math.max(permitsPerSecond, maxBurstPermits);
++        this.state = new AtomicReference<>(new State(this.maxPermits, System.nanoTime()));
++    }
++
++    /**
++     * Attempts to acquire a permit. Returns {@code true} if a permit was
++     * granted immediately, {@code false} otherwise.
++     *
++     * @return {@code true} if the operation is allowed, {@code false} if rate-limited
++     */
++    public boolean tryAcquire() {
++        while (true) {
++            final State current = state.get();
++            final long now = System.nanoTime();
++            final double refill = (now - current.lastRefillNanos) / (double) NANOS_PER_SECOND * permitsPerSecond;
++            final double newPermits = Math.min(maxPermits, current.permits + refill);
++            if (newPermits < 1.0) {
++                return false;
++            }
++            final State updated = new State(newPermits - 1.0, now);
++            if (state.compareAndSet(current, updated)) {
++                return true;
++            }
++        }
++    }
++
++    /**
++     * Returns the number of permits currently available.
++     *
++     * @return the current available permits
++     */
++    public double availablePermits() {
++        final State current = state.get();
++        final long now = System.nanoTime();
++        final double refill = (now - current.lastRefillNanos) / (double) NANOS_PER_SECOND * permitsPerSecond;
++        return Math.min(maxPermits, current.permits + refill);
++    }
++
++    /**
++     * Returns the configured steady-state permit rate.
++     *
++     * @return permits per second
++     */
++    public double getRate() {
++        return permitsPerSecond;
++    }
++
++    /**
++     * Immutable snapshot of the rate limiter internal state.
++     */
++    private static final class State {
++        final double permits;
++        final long lastRefillNanos;
++
++        State(final double permits, final long lastRefillNanos) {
++            this.permits = permits;
++            this.lastRefillNanos = lastRefillNanos;
++        }
++    }
++}
+\ No newline at end of file

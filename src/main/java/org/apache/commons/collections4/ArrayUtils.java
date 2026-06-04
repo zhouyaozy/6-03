@@ -109,6 +109,68 @@ final class ArrayUtils {
     }
 
     /**
+     * Computes the rate per second from a count and elapsed time.
+     *
+     * @param count      the operation count
+     * @param elapsedMs  the elapsed time in milliseconds
+     * @return the rate per second, or 0 if elapsedMs is 0
+     * @throws IllegalArgumentException if count or elapsedMs is negative
+     * @since 4.6
+     */
+    static double calculateRate(final long count, final long elapsedMs) {
+        if (count < 0) {
+            throw new IllegalArgumentException("count must not be negative: " + count);
+        }
+        if (elapsedMs < 0) {
+            throw new IllegalArgumentException("elapsedMs must not be negative: " + elapsedMs);
+        }
+        if (elapsedMs == 0) {
+            return 0.0;
+        }
+        return (double) count / elapsedMs * 1000.0;
+    }
+
+    /**
+     * Calculates the maximum permitted operation count for a given rate
+     * and time window without exceeding the rate limit.
+     *
+     * @param ratePerSecond  the allowed rate per second
+     * @param windowMs       the time window in milliseconds
+     * @return the maximum number of operations permitted in the window, at least 0
+     * @throws IllegalArgumentException if rate or window is negative
+     * @since 4.6
+     */
+    static long calculatePermittedCount(final double ratePerSecond, final long windowMs) {
+        if (ratePerSecond < 0) {
+            throw new IllegalArgumentException("ratePerSecond must not be negative: " + ratePerSecond);
+        }
+        if (windowMs < 0) {
+            throw new IllegalArgumentException("windowMs must not be negative: " + windowMs);
+        }
+        return Math.max(0, (long) (ratePerSecond * windowMs / 1000.0));
+    }
+
+    /**
+     * Checks whether all elements in the array are non-null.
+     *
+     * @param array  the array to check, may be {@code null}
+     * @param <T>    the type of elements
+     * @return {@code true} if the array is non-null and all elements are non-null
+     * @since 4.6
+     */
+    static <T> boolean allNonNull(final T[] array) {
+        if (array == null) {
+            return false;
+        }
+        for (final T element : array) {
+            if (element == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Don't allow instances.
      */
     private ArrayUtils() {
