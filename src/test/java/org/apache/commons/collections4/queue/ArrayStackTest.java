@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.commons.collections4;
+package org.apache.commons.collections4.queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.EmptyStackException;
 
 import org.junit.jupiter.api.Test;
+import org.apache.commons.collections4.AbstractArrayListTest;
 
 /**
  * Tests ArrayStack.
