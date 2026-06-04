@@ -97,6 +97,44 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
                 "Cannot find 'Missing Item'");
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testUserOperationFlow() {
+        final ArrayStack<E> stack = makeObject();
+
+        // Simulate pushing multiple items in a batch
+        stack.pushAll((E) "Item1", (E) "Item2", (E) "Item3");
+        assertFalse(stack.empty(), "Stack should not be empty");
+        assertEquals(3, stack.size(), "Stack size should be 3");
+
+        // Simulate peeking at the top item
+        assertEquals("Item3", stack.peek(), "Top item should be 'Item3'");
+
+        // Simulate searching for an item
+        assertEquals(2, stack.search("Item2"), "Distance from top to 'Item2' should be 2");
+        assertEquals(3, stack.search("Item1"), "Distance from top to 'Item1' should be 3");
+
+        // Simulate popping a single item
+        assertEquals("Item3", stack.pop(), "Popped item should be 'Item3'");
+        assertEquals(2, stack.size(), "Stack size should be 2 after popping one item");
+
+        // Simulate pushing another item
+        stack.push((E) "Item4");
+        assertEquals("Item4", stack.peek(), "Top item should now be 'Item4'");
+
+        // Simulate popping all remaining items
+        final Object[] remainingItems = stack.popAll();
+        assertEquals(3, remainingItems.length, "Should have popped 3 items");
+        assertEquals("Item4", remainingItems[0], "First popped item should be 'Item4'");
+        assertEquals("Item2", remainingItems[1], "Second popped item should be 'Item2'");
+        assertEquals("Item1", remainingItems[2], "Third popped item should be 'Item1'");
+
+        // Verify stack is empty at the end
+        assertTrue(stack.empty(), "Stack should be empty after popAll");
+        assertEquals(0, stack.size(), "Stack size should be 0");
+        assertThrows(EmptyStackException.class, () -> stack.peek());
+    }
+
 //    void testCreate() throws Exception {
 //        resetEmpty();
 //        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.emptyCollection.version4.obj");

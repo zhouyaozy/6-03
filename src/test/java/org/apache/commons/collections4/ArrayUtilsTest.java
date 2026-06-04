@@ -70,4 +70,38 @@ class ArrayUtilsTest {
         assertEquals(4, ArrayUtils.indexOf(array, null));
         assertEquals(-1, ArrayUtils.indexOf(array, "notInArray"));
     }
+
+    @Test
+    void testIsEmpty() {
+        assertTrue(ArrayUtils.isEmpty(null));
+        assertTrue(ArrayUtils.isEmpty(new Object[0]));
+        assertFalse(ArrayUtils.isEmpty(new Object[] { null }));
+        assertFalse(ArrayUtils.isEmpty(new Object[] { "1" }));
+    }
+
+    @Test
+    void testReverse() {
+        ArrayUtils.reverse(null); // Should not throw
+
+        final Object[] emptyArray = new Object[0];
+        ArrayUtils.reverse(emptyArray);
+        assertEquals(0, emptyArray.length);
+
+        final Object[] singleElementArray = { "1" };
+        ArrayUtils.reverse(singleElementArray);
+        assertEquals("1", singleElementArray[0]);
+
+        final Object[] evenArray = { "1", "2", "3", "4" };
+        ArrayUtils.reverse(evenArray);
+        assertEquals("4", evenArray[0]);
+        assertEquals("3", evenArray[1]);
+        assertEquals("2", evenArray[2]);
+        assertEquals("1", evenArray[3]);
+
+        final Object[] oddArray = { "1", "2", "3" };
+        ArrayUtils.reverse(oddArray);
+        assertEquals("3", oddArray[0]);
+        assertEquals("2", oddArray[1]);
+        assertEquals("1", oddArray[2]);
+    }
 }

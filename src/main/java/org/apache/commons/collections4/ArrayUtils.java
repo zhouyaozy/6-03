@@ -109,6 +109,40 @@ final class ArrayUtils {
     }
 
     /**
+     * <p>
+     * Checks if an array is empty or {@code null}.
+     * </p>
+     *
+     * @param array the array to test
+     * @return {@code true} if the array is empty or {@code null}
+     */
+    static boolean isEmpty(final Object[] array) {
+        return array == null || array.length == 0;
+    }
+
+    /**
+     * <p>
+     * Reverses the order of the given array.
+     * </p>
+     *
+     * @param array  the array to reverse, may be {@code null}
+     */
+    static void reverse(final Object[] array) {
+        if (array == null) {
+            return;
+        }
+        int i = 0;
+        int j = array.length - 1;
+        while (j > i) {
+            final Object tmp = array[j];
+            array[j] = array[i];
+            array[i] = tmp;
+            j--;
+            i++;
+        }
+    }
+
+    /**
      * Don't allow instances.
      */
     private ArrayUtils() {

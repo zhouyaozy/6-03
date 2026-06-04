@@ -1,0 +1,177 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..ef6c606a5 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -137,6 +137,35 @@ public class ArrayStack<E> extends ArrayList<E> {
+         return item;
+     }
+ 
++    /**
++     * Pushes a batch of items onto the top of this stack.
++     *
++     * @param items  the items to be added
++     */
++    @SuppressWarnings("unchecked")
++    public void pushAll(final E... items) {
++        if (ArrayUtils.isEmpty(items)) {
++            return;
++        }
++        for (final E item : items) {
++            push(item);
++        }
++    }
++
++    /**
++     * Pops all items from the stack and returns them as an array.
++     * The array will be ordered such that the top element of the stack
++     * is the first element in the array.
++     *
++     * @return an array of all items popped from the stack
++     */
++    public Object[] popAll() {
++        final Object[] result = toArray();
++        clear();
++        ArrayUtils.reverse(result);
++        return result;
++    }
++
+     /**
+      * Returns the one-based position of the distance from the top that the
+      * specified object exists on this stack, where the top-most element is
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayUtils.java b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+index 8fdbab144..9ddad22f2 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayUtils.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+@@ -108,6 +108,40 @@ final class ArrayUtils {
+         return indexOf(array, objectToFind, 0);
+     }
+ 
++    /**
++     * <p>
++     * Checks if an array is empty or {@code null}.
++     * </p>
++     *
++     * @param array the array to test
++     * @return {@code true} if the array is empty or {@code null}
++     */
++    static boolean isEmpty(final Object[] array) {
++        return array == null || array.length == 0;
++    }
++
++    /**
++     * <p>
++     * Reverses the order of the given array.
++     * </p>
++     *
++     * @param array  the array to reverse, may be {@code null}
++     */
++    static void reverse(final Object[] array) {
++        if (array == null) {
++            return;
++        }
++        int i = 0;
++        int j = array.length - 1;
++        while (j > i) {
++            final Object tmp = array[j];
++            array[j] = array[i];
++            array[i] = tmp;
++            j--;
++            i++;
++        }
++    }
++
+     /**
+      * Don't allow instances.
+      */
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+index 360f36a80..0227eb03c 100644
+--- a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
++++ b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+@@ -97,6 +97,44 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+                 "Cannot find 'Missing Item'");
+     }
+ 
++    @Test
++    @SuppressWarnings("unchecked")
++    public void testUserOperationFlow() {
++        final ArrayStack<E> stack = makeObject();
++
++        // Simulate pushing multiple items in a batch
++        stack.pushAll((E) "Item1", (E) "Item2", (E) "Item3");
++        assertFalse(stack.empty(), "Stack should not be empty");
++        assertEquals(3, stack.size(), "Stack size should be 3");
++
++        // Simulate peeking at the top item
++        assertEquals("Item3", stack.peek(), "Top item should be 'Item3'");
++
++        // Simulate searching for an item
++        assertEquals(2, stack.search("Item2"), "Distance from top to 'Item2' should be 2");
++        assertEquals(3, stack.search("Item1"), "Distance from top to 'Item1' should be 3");
++
++        // Simulate popping a single item
++        assertEquals("Item3", stack.pop(), "Popped item should be 'Item3'");
++        assertEquals(2, stack.size(), "Stack size should be 2 after popping one item");
++
++        // Simulate pushing another item
++        stack.push((E) "Item4");
++        assertEquals("Item4", stack.peek(), "Top item should now be 'Item4'");
++
++        // Simulate popping all remaining items
++        final Object[] remainingItems = stack.popAll();
++        assertEquals(3, remainingItems.length, "Should have popped 3 items");
++        assertEquals("Item4", remainingItems[0], "First popped item should be 'Item4'");
++        assertEquals("Item2", remainingItems[1], "Second popped item should be 'Item2'");
++        assertEquals("Item1", remainingItems[2], "Third popped item should be 'Item1'");
++
++        // Verify stack is empty at the end
++        assertTrue(stack.empty(), "Stack should be empty after popAll");
++        assertEquals(0, stack.size(), "Stack size should be 0");
++        assertThrows(EmptyStackException.class, () -> stack.peek());
++    }
++
+ //    void testCreate() throws Exception {
+ //        resetEmpty();
+ //        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.emptyCollection.version4.obj");
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java b/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
+index 16a88c993..cc63ea148 100644
+--- a/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
++++ b/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
+@@ -70,4 +70,38 @@ class ArrayUtilsTest {
+         assertEquals(4, ArrayUtils.indexOf(array, null));
+         assertEquals(-1, ArrayUtils.indexOf(array, "notInArray"));
+     }
++
++    @Test
++    void testIsEmpty() {
++        assertTrue(ArrayUtils.isEmpty(null));
++        assertTrue(ArrayUtils.isEmpty(new Object[0]));
++        assertFalse(ArrayUtils.isEmpty(new Object[] { null }));
++        assertFalse(ArrayUtils.isEmpty(new Object[] { "1" }));
++    }
++
++    @Test
++    void testReverse() {
++        ArrayUtils.reverse(null); // Should not throw
++
++        final Object[] emptyArray = new Object[0];
++        ArrayUtils.reverse(emptyArray);
++        assertEquals(0, emptyArray.length);
++
++        final Object[] singleElementArray = { "1" };
++        ArrayUtils.reverse(singleElementArray);
++        assertEquals("1", singleElementArray[0]);
++
++        final Object[] evenArray = { "1", "2", "3", "4" };
++        ArrayUtils.reverse(evenArray);
++        assertEquals("4", evenArray[0]);
++        assertEquals("3", evenArray[1]);
++        assertEquals("2", evenArray[2]);
++        assertEquals("1", evenArray[3]);
++
++        final Object[] oddArray = { "1", "2", "3" };
++        ArrayUtils.reverse(oddArray);
++        assertEquals("3", oddArray[0]);
++        assertEquals("2", oddArray[1]);
++        assertEquals("1", oddArray[2]);
++    }
+ }

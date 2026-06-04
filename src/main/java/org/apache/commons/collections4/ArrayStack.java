@@ -138,6 +138,35 @@ public class ArrayStack<E> extends ArrayList<E> {
     }
 
     /**
+     * Pushes a batch of items onto the top of this stack.
+     *
+     * @param items  the items to be added
+     */
+    @SuppressWarnings("unchecked")
+    public void pushAll(final E... items) {
+        if (ArrayUtils.isEmpty(items)) {
+            return;
+        }
+        for (final E item : items) {
+            push(item);
+        }
+    }
+
+    /**
+     * Pops all items from the stack and returns them as an array.
+     * The array will be ordered such that the top element of the stack
+     * is the first element in the array.
+     *
+     * @return an array of all items popped from the stack
+     */
+    public Object[] popAll() {
+        final Object[] result = toArray();
+        clear();
+        ArrayUtils.reverse(result);
+        return result;
+    }
+
+    /**
      * Returns the one-based position of the distance from the top that the
      * specified object exists on this stack, where the top-most element is
      * considered to be at distance {@code 1}.  If the object is not
