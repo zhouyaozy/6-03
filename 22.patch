@@ -1,0 +1,394 @@
+diff --git a/.github/workflows/zap-baseline.yml b/.github/workflows/zap-baseline.yml
+new file mode 100644
+index 000000000..150e4ab86
+--- /dev/null
++++ b/.github/workflows/zap-baseline.yml
+@@ -0,0 +1,102 @@
++# Licensed to the Apache Software Foundation (ASF) under one or more
++# contributor license agreements.  See the NOTICE file distributed with
++# this work for additional information regarding copyright ownership.
++# The ASF licenses this file to You under the Apache License, Version 2.0
++# (the "License"); you may not use this file except in compliance with
++# the License.  You may obtain a copy of the License at
++#
++#      https://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++name: ZAP Baseline
++
++on:
++  push:
++    branches:
++      - 'master'
++    paths:
++      - '.github/workflows/zap-baseline.yml'
++      - '.zap/**'
++      - 'pom.xml'
++      - 'src/main/java/org/apache/commons/collections4/ArrayStack.java'
++      - 'src/main/java/org/apache/commons/collections4/ArrayUtils.java'
++      - 'src/test/java/org/apache/commons/collections4/ArraySecurityTestServer.java'
++  pull_request:
++    branches:
++      - 'master'
++    paths:
++      - '.github/workflows/zap-baseline.yml'
++      - '.zap/**'
++      - 'pom.xml'
++      - 'src/main/java/org/apache/commons/collections4/ArrayStack.java'
++      - 'src/main/java/org/apache/commons/collections4/ArrayUtils.java'
++      - 'src/test/java/org/apache/commons/collections4/ArraySecurityTestServer.java'
++
++permissions:
++  contents: read
++
++jobs:
++  zap-baseline:
++    runs-on: ubuntu-latest
++
++    steps:
++      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
++        with:
++          persist-credentials: false
++      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
++        with:
++          path: ~/.m2/repository
++          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
++          restore-keys: |
++            ${{ runner.os }}-maven-
++      - name: Set up JDK 21
++        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
++        with:
++          distribution: 'temurin'
++          java-version: '21'
++      - name: Compile focused scan target
++        run: mvn --errors --batch-mode --no-transfer-progress -DskipTests test-compile
++      - name: Start focused scan target
++        run: |
++          java -cp target/test-classes:target/classes org.apache.commons.collections4.ArraySecurityTestServer > target/zap-server.log 2>&1 &
++          echo $! > target/zap-server.pid
++          for attempt in $(seq 1 30); do
++            if curl --fail --silent http://127.0.0.1:8090/health > /dev/null; then
++              exit 0
++            fi
++            sleep 1
++          done
++          cat target/zap-server.log
++          exit 1
++      - name: Run OWASP ZAP baseline scan
++        run: |
++          docker run --rm --network=host \
++            -v "${GITHUB_WORKSPACE}:/zap/wrk:rw" \
++            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
++            -t http://127.0.0.1:8090 \
++            -I \
++            -m 2 \
++            -c .zap/rules.tsv \
++            -r target/zap-report.html \
++            -w target/zap-report.md \
++            -J target/zap-report.json
++      - name: Print ZAP summary
++        if: always()
++        run: |
++          if test -f target/zap-report.md; then
++            cat target/zap-report.md
++          fi
++          if test -f target/zap-server.log; then
++            cat target/zap-server.log
++          fi
++      - name: Stop focused scan target
++        if: always()
++        run: |
++          if test -f target/zap-server.pid; then
++            kill "$(cat target/zap-server.pid)" || true
++          fi
+diff --git a/.zap/rules.tsv b/.zap/rules.tsv
+new file mode 100644
+index 000000000..92ad94580
+--- /dev/null
++++ b/.zap/rules.tsv
+@@ -0,0 +1,4 @@
++10035	IGNORE	Localhost HTTP harness runs without TLS during CI.
++10036	IGNORE	The focused harness does not expose application server versioning.
++10037	IGNORE	The focused harness does not expose X-Powered-By details.
++10096	IGNORE	The JDK test server Date header is not part of the library attack surface.
+diff --git a/src/test/java/org/apache/commons/collections4/ArraySecurityTestServer.java b/src/test/java/org/apache/commons/collections4/ArraySecurityTestServer.java
+new file mode 100644
+index 000000000..6e44272f8
+--- /dev/null
++++ b/src/test/java/org/apache/commons/collections4/ArraySecurityTestServer.java
+@@ -0,0 +1,270 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++import java.io.BufferedReader;
++import java.io.BufferedWriter;
++import java.io.IOException;
++import java.io.InputStreamReader;
++import java.io.OutputStream;
++import java.io.OutputStreamWriter;
++import java.io.UnsupportedEncodingException;
++import java.net.InetAddress;
++import java.net.ServerSocket;
++import java.net.Socket;
++import java.net.URLDecoder;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++@SuppressWarnings("deprecation")
++public final class ArraySecurityTestServer {
++
++    private static final int DEFAULT_PORT = 8090;
++    private static final String HTML_CONTENT_TYPE = "text/html; charset=UTF-8";
++    private static final String TEXT_CONTENT_TYPE = "text/plain; charset=UTF-8";
++
++    public static void main(final String[] args) throws Exception {
++        final int port = Integer.getInteger("zap.test.port", DEFAULT_PORT);
++        final ServerSocket serverSocket = new ServerSocket(port, 0, InetAddress.getLoopbackAddress());
++        serverSocket.setReuseAddress(true);
++        Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(serverSocket)));
++        while (!serverSocket.isClosed()) {
++            final Socket socket = serverSocket.accept();
++            try {
++                handle(socket);
++            } catch (final IOException ignored) {
++            }
++        }
++    }
++
++    private static void closeQuietly(final ServerSocket serverSocket) {
++        try {
++            serverSocket.close();
++        } catch (final IOException ignored) {
++        }
++    }
++
++    private static String decode(final String value) {
++        try {
++            return URLDecoder.decode(value, StandardCharsets.UTF_8.name());
++        } catch (final UnsupportedEncodingException e) {
++            throw new IllegalStateException(e);
++        }
++    }
++
++    private static String escapeHtml(final String value) {
++        final StringBuilder builder = new StringBuilder(value.length());
++        for (int i = 0; i < value.length(); i++) {
++            final char character = value.charAt(i);
++            if (character == '&') {
++                builder.append("&amp;");
++            } else if (character == '<') {
++                builder.append("&lt;");
++            } else if (character == '>') {
++                builder.append("&gt;");
++            } else if (character == '"') {
++                builder.append("&quot;");
++            } else if (character == '\'') {
++                builder.append("&#39;");
++            } else {
++                builder.append(character);
++            }
++        }
++        return builder.toString();
++    }
++
++    private static String firstValue(final Map<String, List<String>> parameters, final String name) {
++        final List<String> values = parameters.get(name);
++        return values == null || values.isEmpty() ? null : values.get(0);
++    }
++
++    private static void handle(final Socket socket) throws IOException {
++        try (Socket currentSocket = socket;
++                BufferedReader reader = new BufferedReader(
++                        new InputStreamReader(currentSocket.getInputStream(), StandardCharsets.UTF_8));
++                OutputStream outputStream = currentSocket.getOutputStream()) {
++            currentSocket.setSoTimeout(5000);
++            final String requestLine = reader.readLine();
++            if (requestLine == null || requestLine.isEmpty()) {
++                return;
++            }
++            String line = reader.readLine();
++            while (line != null && !line.isEmpty()) {
++                line = reader.readLine();
++            }
++            final String[] requestParts = requestLine.split(" ");
++            if (requestParts.length < 2 || !"GET".equals(requestParts[0])) {
++                writeTextResponse(outputStream, 405, "Method Not Allowed");
++                return;
++            }
++            final RequestTarget requestTarget = RequestTarget.parse(requestParts[1]);
++            if ("/health".equals(requestTarget.path)) {
++                writeTextResponse(outputStream, 200, "UP");
++                return;
++            }
++            if ("/".equals(requestTarget.path)) {
++                writeHtmlResponse(outputStream, 200, rootBody());
++                return;
++            }
++            if ("/array-stack".equals(requestTarget.path)) {
++                writeHtmlResponse(outputStream, 200, arrayStackBody(requestTarget.parameters));
++                return;
++            }
++            if ("/array-utils".equals(requestTarget.path)) {
++                writeHtmlResponse(outputStream, 200, arrayUtilsBody(requestTarget.parameters));
++                return;
++            }
++            writeTextResponse(outputStream, 404, "Not Found");
++        }
++    }
++
++    private static String arrayStackBody(final Map<String, List<String>> parameters) {
++        final ArrayStack<String> stack = new ArrayStack<>();
++        for (final String item : values(parameters, "item")) {
++            stack.push(item);
++        }
++        final String lookup = firstValue(parameters, "lookup");
++        final int depth = lookup == null ? CollectionUtils.INDEX_NOT_FOUND : stack.search(lookup);
++        final String top = stack.empty() ? "<empty>" : stack.peek();
++        return new StringBuilder()
++                .append("<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\">")
++                .append("<title>ArrayStack Result</title></head><body>")
++                .append("<h1>ArrayStack Result</h1>")
++                .append("<p id=\"size\">size=").append(stack.size()).append("</p>")
++                .append("<p id=\"top\">top=").append(escapeHtml(top)).append("</p>")
++                .append("<p id=\"lookup\">lookup=").append(escapeHtml(nullToEmpty(lookup))).append("</p>")
++                .append("<p id=\"depth\">depth=").append(depth).append("</p>")
++                .append("<p><a href=\"/\">back</a></p>")
++                .append("</body></html>")
++                .toString();
++    }
++
++    private static String arrayUtilsBody(final Map<String, List<String>> parameters) {
++        final List<String> values = values(parameters, "value");
++        final String[] array = values.toArray(new String[0]);
++        final String needle = firstValue(parameters, "needle");
++        final boolean contains = ArrayUtils.contains(array, needle);
++        final int index = ArrayUtils.indexOf(array, needle);
++        return new StringBuilder()
++                .append("<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\">")
++                .append("<title>ArrayUtils Result</title></head><body>")
++                .append("<h1>ArrayUtils Result</h1>")
++                .append("<p id=\"values\">values=").append(escapeHtml(String.join(",", values))).append("</p>")
++                .append("<p id=\"needle\">needle=").append(escapeHtml(nullToEmpty(needle))).append("</p>")
++                .append("<p id=\"contains\">contains=").append(contains).append("</p>")
++                .append("<p id=\"index\">index=").append(index).append("</p>")
++                .append("<p><a href=\"/\">back</a></p>")
++                .append("</body></html>")
++                .toString();
++    }
++
++    private static String nullToEmpty(final String value) {
++        return value == null ? "" : value;
++    }
++
++    private static Map<String, List<String>> parseQuery(final String rawQuery) {
++        final Map<String, List<String>> parameters = new LinkedHashMap<>();
++        if (rawQuery == null || rawQuery.isEmpty()) {
++            return parameters;
++        }
++        for (final String pair : rawQuery.split("&")) {
++            final int separatorIndex = pair.indexOf('=');
++            final String key = separatorIndex >= 0 ? pair.substring(0, separatorIndex) : pair;
++            final String value = separatorIndex >= 0 ? pair.substring(separatorIndex + 1) : "";
++            parameters.computeIfAbsent(decode(key), ignored -> new ArrayList<>()).add(decode(value));
++        }
++        return parameters;
++    }
++
++    private static String rootBody() {
++        return new StringBuilder()
++                .append("<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\">")
++                .append("<title>Array Security Harness</title></head><body>")
++                .append("<h1>Array Security Harness</h1>")
++                .append("<ul>")
++                .append("<li><a href=\"/array-stack?item=alpha&amp;item=beta&amp;lookup=beta\">ArrayStack scenario</a></li>")
++                .append("<li><a href=\"/array-utils?value=alpha&amp;value=beta&amp;needle=beta\">ArrayUtils scenario</a></li>")
++                .append("</ul>")
++                .append("</body></html>")
++                .toString();
++    }
++
++    private static List<String> values(final Map<String, List<String>> parameters, final String name) {
++        final List<String> values = parameters.get(name);
++        return values == null ? new ArrayList<>() : values;
++    }
++
++    private static void writeHeaders(final BufferedWriter writer, final int statusCode,
++            final String reasonPhrase, final String contentType, final int contentLength) throws IOException {
++        writer.write("HTTP/1.1 " + statusCode + ' ' + reasonPhrase + "\r\n");
++        writer.write("Cache-Control: no-store\r\n");
++        writer.write("Connection: close\r\n");
++        writer.write("Content-Length: " + contentLength + "\r\n");
++        writer.write("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'\r\n");
++        writer.write("Content-Type: " + contentType + "\r\n");
++        writer.write("Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=()\r\n");
++        writer.write("Referrer-Policy: no-referrer\r\n");
++        writer.write("X-Content-Type-Options: nosniff\r\n");
++        writer.write("X-Frame-Options: DENY\r\n");
++        writer.write("\r\n");
++        writer.flush();
++    }
++
++    private static void writeHtmlResponse(final OutputStream outputStream, final int statusCode,
++            final String body) throws IOException {
++        writeResponse(outputStream, statusCode, HTML_CONTENT_TYPE, body);
++    }
++
++    private static void writeResponse(final OutputStream outputStream, final int statusCode,
++            final String contentType, final String body) throws IOException {
++        final byte[] responseBytes = body.getBytes(StandardCharsets.UTF_8);
++        final BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(outputStream, StandardCharsets.UTF_8));
++        writeHeaders(writer, statusCode, statusCode == 200 ? "OK"
++                : statusCode == 404 ? "Not Found" : "Method Not Allowed", contentType, responseBytes.length);
++        outputStream.write(responseBytes);
++        outputStream.flush();
++    }
++
++    private static void writeTextResponse(final OutputStream outputStream, final int statusCode,
++            final String body) throws IOException {
++        writeResponse(outputStream, statusCode, TEXT_CONTENT_TYPE, body);
++    }
++
++    private ArraySecurityTestServer() {
++    }
++
++    private static final class RequestTarget {
++
++        private static RequestTarget parse(final String rawTarget) {
++            final int queryIndex = rawTarget.indexOf('?');
++            final String path = decode(queryIndex >= 0 ? rawTarget.substring(0, queryIndex) : rawTarget);
++            final String rawQuery = queryIndex >= 0 ? rawTarget.substring(queryIndex + 1) : null;
++            return new RequestTarget(path, parseQuery(rawQuery));
++        }
++
++        private final String path;
++        private final Map<String, List<String>> parameters;
++
++        private RequestTarget(final String path, final Map<String, List<String>> parameters) {
++            this.path = path;
++            this.parameters = parameters;
++        }
++    }
++}

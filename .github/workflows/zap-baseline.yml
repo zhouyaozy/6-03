@@ -1,0 +1,102 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: ZAP Baseline
+
+on:
+  push:
+    branches:
+      - 'master'
+    paths:
+      - '.github/workflows/zap-baseline.yml'
+      - '.zap/**'
+      - 'pom.xml'
+      - 'src/main/java/org/apache/commons/collections4/ArrayStack.java'
+      - 'src/main/java/org/apache/commons/collections4/ArrayUtils.java'
+      - 'src/test/java/org/apache/commons/collections4/ArraySecurityTestServer.java'
+  pull_request:
+    branches:
+      - 'master'
+    paths:
+      - '.github/workflows/zap-baseline.yml'
+      - '.zap/**'
+      - 'pom.xml'
+      - 'src/main/java/org/apache/commons/collections4/ArrayStack.java'
+      - 'src/main/java/org/apache/commons/collections4/ArrayUtils.java'
+      - 'src/test/java/org/apache/commons/collections4/ArraySecurityTestServer.java'
+
+permissions:
+  contents: read
+
+jobs:
+  zap-baseline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      - name: Set up JDK 21
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - name: Compile focused scan target
+        run: mvn --errors --batch-mode --no-transfer-progress -DskipTests test-compile
+      - name: Start focused scan target
+        run: |
+          java -cp target/test-classes:target/classes org.apache.commons.collections4.ArraySecurityTestServer > target/zap-server.log 2>&1 &
+          echo $! > target/zap-server.pid
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8090/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/zap-server.log
+          exit 1
+      - name: Run OWASP ZAP baseline scan
+        run: |
+          docker run --rm --network=host \
+            -v "${GITHUB_WORKSPACE}:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+            -t http://127.0.0.1:8090 \
+            -I \
+            -m 2 \
+            -c .zap/rules.tsv \
+            -r target/zap-report.html \
+            -w target/zap-report.md \
+            -J target/zap-report.json
+      - name: Print ZAP summary
+        if: always()
+        run: |
+          if test -f target/zap-report.md; then
+            cat target/zap-report.md
+          fi
+          if test -f target/zap-server.log; then
+            cat target/zap-server.log
+          fi
+      - name: Stop focused scan target
+        if: always()
+        run: |
+          if test -f target/zap-server.pid; then
+            kill "$(cat target/zap-server.pid)" || true
+          fi

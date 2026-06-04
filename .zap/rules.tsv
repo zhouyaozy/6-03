@@ -1,0 +1,4 @@
+10035	IGNORE	Localhost HTTP harness runs without TLS during CI.
+10036	IGNORE	The focused harness does not expose application server versioning.
+10037	IGNORE	The focused harness does not expose X-Powered-By details.
+10096	IGNORE	The JDK test server Date header is not part of the library attack surface.
