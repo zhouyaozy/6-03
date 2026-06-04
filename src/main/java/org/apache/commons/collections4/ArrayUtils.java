@@ -76,6 +76,9 @@ final class ArrayUtils {
         if (startIndex < 0) {
             startIndex = 0;
         }
+        if (startIndex >= array.length) {
+            return CollectionUtils.INDEX_NOT_FOUND;
+        }
         if (objectToFind == null) {
             for (int i = startIndex; i < array.length; i++) {
                 if (array[i] == null) {

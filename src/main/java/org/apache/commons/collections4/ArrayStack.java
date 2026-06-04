@@ -149,18 +149,30 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
+        int i = size() - 1;
+        int n = 1;
         while (i >= 0) {
             final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
+            if ((object == null && current == null)
+                || (object != null && object.equals(current))) {
                 return n;
             }
             i--;
             n++;
         }
         return -1;
+    }
+
+    /**
+     * Returns a shallow copy of this {@code ArrayStack} instance.
+     * (The elements themselves are not copied.)
+     *
+     * @return a clone of this {@code ArrayStack} instance
+     */
+    @Override
+    @SuppressWarnings("unchecked")
+    public ArrayStack<E> clone() {
+        return (ArrayStack<E>) super.clone();
     }
 
 }
