@@ -37,6 +37,11 @@ import java.util.EmptyStackException;
  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
  * removed {@code Buffer} interface anymore.
  * </p>
+ * <p>
+ * <strong>Thread Safety:</strong> This class is not thread-safe by default. For high-concurrency
+ * scenarios, use {@link #withLock(DistributedLock)} to wrap the stack with a distributed lock,
+ * or use {@link #withDefaultLock()} for a default ReentrantLock-based solution.
+ * </p>
  *
  * @param <E> the type of elements in this list
  * @see java.util.Stack
@@ -48,6 +53,9 @@ public class ArrayStack<E> extends ArrayList<E> {
 
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
+
+    /** The distributed lock for thread-safe operations, null when not enabled */
+    private transient volatile DistributedLock lock;
 
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
@@ -68,6 +76,29 @@ public class ArrayStack<E> extends ArrayList<E> {
     }
 
     /**
+     * Constructs a new empty {@code ArrayStack} with a distributed lock.
+     *
+     * @param lock the distributed lock to use for thread-safe operations
+     * @since 4.6
+     */
+    public ArrayStack(final DistributedLock lock) {
+        this.lock = lock;
+    }
+
+    /**
+     * Constructs a new empty {@code ArrayStack} with an initial size and a distributed lock.
+     *
+     * @param initialSize  the initial size to use
+     * @param lock the distributed lock to use for thread-safe operations
+     * @throws IllegalArgumentException  if the specified initial size is negative
+     * @since 4.6
+     */
+    public ArrayStack(final int initialSize, final DistributedLock lock) {
+        super(initialSize);
+        this.lock = lock;
+    }
+
+    /**
      * Return {@code true} if this stack is currently empty.
      * <p>
      * This method exists for compatibility with {@link java.util.Stack}.
@@ -77,6 +108,15 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return true if the stack is currently empty
      */
     public boolean empty() {
+        final DistributedLock currentLock = this.lock;
+        if (currentLock != null) {
+            currentLock.lock();
+            try {
+                return isEmpty();
+            } finally {
+                currentLock.unlock();
+            }
+        }
         return isEmpty();
     }
 
@@ -87,6 +127,19 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
+        final DistributedLock currentLock = this.lock;
+        if (currentLock != null) {
+            currentLock.lock();
+            try {
+                final int n = size();
+                if (n <= 0) {
+                    throw new EmptyStackException();
+                }
+                return get(n - 1);
+            } finally {
+                currentLock.unlock();
+            }
+        }
         final int n = size();
         if (n <= 0) {
             throw new EmptyStackException();
@@ -104,6 +157,19 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
+        final DistributedLock currentLock = this.lock;
+        if (currentLock != null) {
+            currentLock.lock();
+            try {
+                final int m = size() - n - 1;
+                if (m < 0) {
+                    throw new EmptyStackException();
+                }
+                return get(m);
+            } finally {
+                currentLock.unlock();
+            }
+        }
         final int m = size() - n - 1;
         if (m < 0) {
             throw new EmptyStackException();
@@ -118,6 +184,19 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
+        final DistributedLock currentLock = this.lock;
+        if (currentLock != null) {
+            currentLock.lock();
+            try {
+                final int n = size();
+                if (n <= 0) {
+                    throw new EmptyStackException();
+                }
+                return remove(n - 1);
+            } finally {
+                currentLock.unlock();
+            }
+        }
         final int n = size();
         if (n <= 0) {
             throw new EmptyStackException();
@@ -133,6 +212,16 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the item just pushed
      */
     public E push(final E item) {
+        final DistributedLock currentLock = this.lock;
+        if (currentLock != null) {
+            currentLock.lock();
+            try {
+                add(item);
+                return item;
+            } finally {
+                currentLock.unlock();
+            }
+        }
         add(item);
         return item;
     }
@@ -149,8 +238,21 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
+        final DistributedLock currentLock = this.lock;
+        if (currentLock != null) {
+            currentLock.lock();
+            try {
+                return doSearch(object);
+            } finally {
+                currentLock.unlock();
+            }
+        }
+        return doSearch(object);
+    }
+
+    private int doSearch(final Object object) {
+        int i = size() - 1;
+        int n = 1;
         while (i >= 0) {
             final Object current = get(i);
             if (object == null && current == null ||
@@ -161,6 +263,50 @@ public class ArrayStack<E> extends ArrayList<E> {
             n++;
         }
         return -1;
+    }
+
+    /**
+     * Wraps this stack with the given distributed lock for thread-safe operations.
+     *
+     * @param lock the distributed lock to use
+     * @return this stack instance with lock enabled
+     * @since 4.6
+     */
+    public ArrayStack<E> withLock(final DistributedLock lock) {
+        this.lock = lock;
+        return this;
+    }
+
+    /**
+     * Wraps this stack with a default {@link DefaultDistributedLock} for thread-safe operations.
+     *
+     * @return this stack instance with default lock enabled
+     * @since 4.6
+     */
+    public ArrayStack<E> withDefaultLock() {
+        return withDefaultLock(false);
+    }
+
+    /**
+     * Wraps this stack with a default {@link DefaultDistributedLock} for thread-safe operations.
+     *
+     * @param fair if {@code true}, lock acquisition favors the longest waiting thread
+     * @return this stack instance with default lock enabled
+     * @since 4.6
+     */
+    public ArrayStack<E> withDefaultLock(final boolean fair) {
+        this.lock = new DefaultDistributedLock(fair);
+        return this;
+    }
+
+    /**
+     * Returns the distributed lock associated with this stack, or {@code null} if not set.
+     *
+     * @return the distributed lock, or {@code null}
+     * @since 4.6
+     */
+    public DistributedLock getLock() {
+        return lock;
     }
 
 }

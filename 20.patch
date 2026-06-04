@@ -1,0 +1,444 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..9be45674a 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -37,6 +37,11 @@ import java.util.EmptyStackException;
+  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
+  * removed {@code Buffer} interface anymore.
+  * </p>
++ * <p>
++ * <strong>Thread Safety:</strong> This class is not thread-safe by default. For high-concurrency
++ * scenarios, use {@link #withLock(DistributedLock)} to wrap the stack with a distributed lock,
++ * or use {@link #withDefaultLock()} for a default ReentrantLock-based solution.
++ * </p>
+  *
+  * @param <E> the type of elements in this list
+  * @see java.util.Stack
+@@ -49,6 +54,9 @@ public class ArrayStack<E> extends ArrayList<E> {
+     /** Ensure serialization compatibility */
+     private static final long serialVersionUID = 2130079159931574599L;
+ 
++    /** The distributed lock for thread-safe operations, null when not enabled */
++    private transient volatile DistributedLock lock;
++
+     /**
+      * Constructs a new empty {@code ArrayStack}. The initial size
+      * is controlled by {@code ArrayList} and is currently 10.
+@@ -67,6 +75,29 @@ public class ArrayStack<E> extends ArrayList<E> {
+         super(initialSize);
+     }
+ 
++    /**
++     * Constructs a new empty {@code ArrayStack} with a distributed lock.
++     *
++     * @param lock the distributed lock to use for thread-safe operations
++     * @since 4.6
++     */
++    public ArrayStack(final DistributedLock lock) {
++        this.lock = lock;
++    }
++
++    /**
++     * Constructs a new empty {@code ArrayStack} with an initial size and a distributed lock.
++     *
++     * @param initialSize  the initial size to use
++     * @param lock the distributed lock to use for thread-safe operations
++     * @throws IllegalArgumentException  if the specified initial size is negative
++     * @since 4.6
++     */
++    public ArrayStack(final int initialSize, final DistributedLock lock) {
++        super(initialSize);
++        this.lock = lock;
++    }
++
+     /**
+      * Return {@code true} if this stack is currently empty.
+      * <p>
+@@ -77,6 +108,15 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return true if the stack is currently empty
+      */
+     public boolean empty() {
++        final DistributedLock currentLock = this.lock;
++        if (currentLock != null) {
++            currentLock.lock();
++            try {
++                return isEmpty();
++            } finally {
++                currentLock.unlock();
++            }
++        }
+         return isEmpty();
+     }
+ 
+@@ -87,6 +127,19 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E peek() throws EmptyStackException {
++        final DistributedLock currentLock = this.lock;
++        if (currentLock != null) {
++            currentLock.lock();
++            try {
++                final int n = size();
++                if (n <= 0) {
++                    throw new EmptyStackException();
++                }
++                return get(n - 1);
++            } finally {
++                currentLock.unlock();
++            }
++        }
+         final int n = size();
+         if (n <= 0) {
+             throw new EmptyStackException();
+@@ -104,6 +157,19 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *  stack to satisfy this request
+      */
+     public E peek(final int n) throws EmptyStackException {
++        final DistributedLock currentLock = this.lock;
++        if (currentLock != null) {
++            currentLock.lock();
++            try {
++                final int m = size() - n - 1;
++                if (m < 0) {
++                    throw new EmptyStackException();
++                }
++                return get(m);
++            } finally {
++                currentLock.unlock();
++            }
++        }
+         final int m = size() - n - 1;
+         if (m < 0) {
+             throw new EmptyStackException();
+@@ -118,6 +184,19 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E pop() throws EmptyStackException {
++        final DistributedLock currentLock = this.lock;
++        if (currentLock != null) {
++            currentLock.lock();
++            try {
++                final int n = size();
++                if (n <= 0) {
++                    throw new EmptyStackException();
++                }
++                return remove(n - 1);
++            } finally {
++                currentLock.unlock();
++            }
++        }
+         final int n = size();
+         if (n <= 0) {
+             throw new EmptyStackException();
+@@ -133,6 +212,16 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the item just pushed
+      */
+     public E push(final E item) {
++        final DistributedLock currentLock = this.lock;
++        if (currentLock != null) {
++            currentLock.lock();
++            try {
++                add(item);
++                return item;
++            } finally {
++                currentLock.unlock();
++            }
++        }
+         add(item);
+         return item;
+     }
+@@ -149,8 +238,21 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the 1-based depth into the stack of the object, or -1 if not found
+      */
+     public int search(final Object object) {
+-        int i = size() - 1;        // Current index
+-        int n = 1;                 // Current distance
++        final DistributedLock currentLock = this.lock;
++        if (currentLock != null) {
++            currentLock.lock();
++            try {
++                return doSearch(object);
++            } finally {
++                currentLock.unlock();
++            }
++        }
++        return doSearch(object);
++    }
++
++    private int doSearch(final Object object) {
++        int i = size() - 1;
++        int n = 1;
+         while (i >= 0) {
+             final Object current = get(i);
+             if (object == null && current == null ||
+@@ -163,4 +265,48 @@ public class ArrayStack<E> extends ArrayList<E> {
+         return -1;
+     }
+ 
++    /**
++     * Wraps this stack with the given distributed lock for thread-safe operations.
++     *
++     * @param lock the distributed lock to use
++     * @return this stack instance with lock enabled
++     * @since 4.6
++     */
++    public ArrayStack<E> withLock(final DistributedLock lock) {
++        this.lock = lock;
++        return this;
++    }
++
++    /**
++     * Wraps this stack with a default {@link DefaultDistributedLock} for thread-safe operations.
++     *
++     * @return this stack instance with default lock enabled
++     * @since 4.6
++     */
++    public ArrayStack<E> withDefaultLock() {
++        return withDefaultLock(false);
++    }
++
++    /**
++     * Wraps this stack with a default {@link DefaultDistributedLock} for thread-safe operations.
++     *
++     * @param fair if {@code true}, lock acquisition favors the longest waiting thread
++     * @return this stack instance with default lock enabled
++     * @since 4.6
++     */
++    public ArrayStack<E> withDefaultLock(final boolean fair) {
++        this.lock = new DefaultDistributedLock(fair);
++        return this;
++    }
++
++    /**
++     * Returns the distributed lock associated with this stack, or {@code null} if not set.
++     *
++     * @return the distributed lock, or {@code null}
++     * @since 4.6
++     */
++    public DistributedLock getLock() {
++        return lock;
++    }
++
+ }
+diff --git a/src/main/java/org/apache/commons/collections4/DefaultDistributedLock.java b/src/main/java/org/apache/commons/collections4/DefaultDistributedLock.java
+new file mode 100644
+index 000000000..64860f3cc
+--- /dev/null
++++ b/src/main/java/org/apache/commons/collections4/DefaultDistributedLock.java
+@@ -0,0 +1,116 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.locks.Condition;
++import java.util.concurrent.locks.ReentrantLock;
++
++/**
++ * Default implementation of {@link DistributedLock} based on {@link ReentrantLock}.
++ * <p>
++ * This implementation provides a local reentrant lock suitable for
++ * single-JVM high-concurrency scenarios. For true distributed environments,
++ * consider implementing {@link DistributedLock} with Redis, ZooKeeper, or
++ * other distributed coordination services.
++ * </p>
++ *
++ * @since 4.6
++ */
++public class DefaultDistributedLock implements DistributedLock {
++
++    private final ReentrantLock lock;
++    private final String name;
++
++    /**
++     * Constructs a new {@code DefaultDistributedLock} with a default name.
++     */
++    public DefaultDistributedLock() {
++        this("DefaultDistributedLock");
++    }
++
++    /**
++     * Constructs a new {@code DefaultDistributedLock} with the given name.
++     *
++     * @param name the name of this lock
++     */
++    public DefaultDistributedLock(final String name) {
++        this.name = name;
++        this.lock = new ReentrantLock();
++    }
++
++    /**
++     * Constructs a new {@code DefaultDistributedLock} with the given fairness policy.
++     *
++     * @param fair if {@code true}, lock acquisition favors the longest waiting thread
++     */
++    public DefaultDistributedLock(final boolean fair) {
++        this("DefaultDistributedLock", fair);
++    }
++
++    /**
++     * Constructs a new {@code DefaultDistributedLock} with the given name and fairness policy.
++     *
++     * @param name the name of this lock
++     * @param fair if {@code true}, lock acquisition favors the longest waiting thread
++     */
++    public DefaultDistributedLock(final String name, final boolean fair) {
++        this.name = name;
++        this.lock = new ReentrantLock(fair);
++    }
++
++    @Override
++    public void lock() {
++        lock.lock();
++    }
++
++    @Override
++    public void lockInterruptibly() throws InterruptedException {
++        lock.lockInterruptibly();
++    }
++
++    @Override
++    public boolean tryLock() {
++        return lock.tryLock();
++    }
++
++    @Override
++    public boolean tryLock(final long timeout, final TimeUnit unit) throws InterruptedException {
++        return lock.tryLock(timeout, unit);
++    }
++
++    @Override
++    public void unlock() {
++        lock.unlock();
++    }
++
++    @Override
++    public String getName() {
++        return name;
++    }
++
++    @Override
++    public Condition newCondition() {
++        return lock.newCondition();
++    }
++
++    @Override
++    public String toString() {
++        return "DefaultDistributedLock[name=" + name + ", " + lock.toString() + "]";
++    }
++
++}
+diff --git a/src/main/java/org/apache/commons/collections4/DistributedLock.java b/src/main/java/org/apache/commons/collections4/DistributedLock.java
+new file mode 100644
+index 000000000..adadf3a3f
+--- /dev/null
++++ b/src/main/java/org/apache/commons/collections4/DistributedLock.java
+@@ -0,0 +1,94 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.commons.collections4;
++
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.locks.Condition;
++import java.util.concurrent.locks.Lock;
++
++/**
++ * A distributed lock interface for high-concurrency scenarios.
++ * <p>
++ * This interface provides a lock abstraction that can be implemented
++ * by various distributed lock mechanisms (e.g., Redis, ZooKeeper, etc.)
++ * to protect shared data structures in distributed environments.
++ * </p>
++ *
++ * @since 4.6
++ */
++public interface DistributedLock extends Lock {
++
++    /**
++     * Acquires the lock.
++     * <p>
++     * If the lock is not available then the current thread becomes
++     * disabled for thread scheduling purposes and lies dormant until the
++     * lock has been acquired.
++     * </p>
++     */
++    @Override
++    void lock();
++
++    /**
++     * Acquires the lock unless the current thread is interrupted.
++     *
++     * @throws InterruptedException if the current thread is interrupted
++     */
++    @Override
++    void lockInterruptibly() throws InterruptedException;
++
++    /**
++     * Acquires the lock only if it is free at the time of invocation.
++     *
++     * @return {@code true} if the lock was acquired, {@code false} otherwise
++     */
++    @Override
++    boolean tryLock();
++
++    /**
++     * Acquires the lock if it is free within the given waiting time.
++     *
++     * @param timeout the maximum time to wait for the lock
++     * @param unit the time unit of the timeout argument
++     * @return {@code true} if the lock was acquired, {@code false} otherwise
++     * @throws InterruptedException if the current thread is interrupted
++     */
++    @Override
++    boolean tryLock(long timeout, TimeUnit unit) throws InterruptedException;
++
++    /**
++     * Releases the lock.
++     */
++    @Override
++    void unlock();
++
++    /**
++     * Returns the name of this lock for identification purposes.
++     *
++     * @return the lock name
++     */
++    String getName();
++
++    /**
++     * Returns a {@link Condition} instance for use with this {@link Lock} instance.
++     *
++     * @return a new {@link Condition} instance
++     */
++    @Override
++    Condition newCondition();
++
++}
