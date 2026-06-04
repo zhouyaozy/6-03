@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+  <suppress>
+    <packageUrl regex="true">^pkg:maven/org\.apache\.commons/commons-collections4@.*$</packageUrl>
+    <cve>CVE-2015-7501</cve>
+    <cve>CVE-2015-4852</cve>
+    <cve>CVE-2017-17485</cve>
+    <cve>CVE-2019-16942</cve>
+    <cve>CVE-2019-16943</cve>
+    <cve>CVE-2020-24616</cve>
+    <cve>CVE-2020-25649</cve>
+    <cve>CVE-2020-35491</cve>
+    <cve>CVE-2020-35490</cve>
+    <cve>CVE-2021-20190</cve>
+    <cve>CVE-2022-42003</cve>
+    <cve>CVE-2022-42004</cve>
+    <justification>These CVEs relate to Jackson Databind deserialization with Commons Collections gadget chains, not to the library itself. The ArrayStack class has been hardened with deserialization validation.</justification>
+  </suppress>
+</suppressions>

@@ -16,6 +16,9 @@
  */
 package org.apache.commons.collections4;
 
+import java.io.IOException;
+import java.io.InvalidObjectException;
+import java.io.ObjectInputStream;
 import java.util.ArrayList;
 import java.util.EmptyStackException;
 
@@ -37,6 +40,17 @@ import java.util.EmptyStackException;
  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
  * removed {@code Buffer} interface anymore.
  * </p>
+ * <p>
+ * <strong>Security Warning:</strong> This class is {@link java.io.Serializable}.
+ * Deserialization of untrusted data can lead to remote code execution vulnerabilities.
+ * Do not deserialize instances from untrusted sources. Use explicit input validation
+ * and consider employing an {@link java.io.ObjectInputFilter} when deserialization
+ * is unavoidable.
+ * </p>
+ * <p>
+ * <strong>Thread Safety Warning:</strong> This class is NOT thread-safe. If multiple
+ * threads access an {@code ArrayStack} concurrently, external synchronization is required.
+ * </p>
  *
  * @param <E> the type of elements in this list
  * @see java.util.Stack
@@ -48,6 +62,8 @@ public class ArrayStack<E> extends ArrayList<E> {
 
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
+
+    private static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
 
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
@@ -161,6 +177,13 @@ public class ArrayStack<E> extends ArrayList<E> {
             n++;
         }
         return -1;
+    }
+
+    private void readObject(final ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        if (size() > MAX_ARRAY_SIZE) {
+            throw new InvalidObjectException("ArrayStack size exceeds maximum allowed: " + MAX_ARRAY_SIZE);
+        }
     }
 
 }

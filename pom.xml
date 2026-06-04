@@ -141,6 +141,8 @@
     <commons.jacoco.complexityRatio>0.78</commons.jacoco.complexityRatio>
     <doxia.module.markdown.version>2.0.0</doxia.module.markdown.version>
     <commons.easymock.version>5.6.0</commons.easymock.version>
+    <owasp.zap.version>2.15.0</owasp.zap.version>
+    <owasp.depcheck.version>12.1.0</owasp.depcheck.version>
   </properties>
   <build>
     <defaultGoal>clean verify apache-rat:check pmd:check checkstyle:check japicmp:cmp javadoc:javadoc</defaultGoal>
@@ -429,6 +431,73 @@
                     <argument>${benchmark}</argument>
                   </arguments>
                 </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>owasp-security-scan</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.owasp</groupId>
+            <artifactId>dependency-check-maven</artifactId>
+            <version>${owasp.depcheck.version}</version>
+            <configuration>
+              <failBuildOnCVSS>7</failBuildOnCVSS>
+              <suppressionFile>${basedir}/src/conf/owasp-suppressions.xml</suppressionFile>
+              <formats>
+                <format>HTML</format>
+                <format>JSON</format>
+              </formats>
+              <outputDirectory>${project.build.directory}/owasp-reports</outputDirectory>
+            </configuration>
+            <executions>
+              <execution>
+                <goals>
+                  <goal>check</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.zaproxy</groupId>
+            <artifactId>zap-maven-plugin</artifactId>
+            <version>${owasp.zap.version}</version>
+            <configuration>
+              <zapOptions>
+                <installdir>${project.build.directory}/zap</installdir>
+                <port>8090</port>
+              </zapOptions>
+              <targetConfigs>
+                <targetConfig>
+                  <contextName>commons-collections4</contextName>
+                  <target>http://localhost:8080</target>
+                </targetConfig>
+              </targetConfigs>
+              <scanPolicy>
+                <strength>MEDIUM</strength>
+                <threshold>MEDIUM</threshold>
+              </scanPolicy>
+              <reportConfigs>
+                <reportConfig>
+                  <format>html</format>
+                  <outputDir>${project.build.directory}/zap-reports</outputDir>
+                </reportConfig>
+              </reportConfigs>
+            </configuration>
+            <executions>
+              <execution>
+                <phase>verify</phase>
+                <goals>
+                  <goal>start-zap</goal>
+                  <goal>spider</goal>
+                  <goal>active-scan</goal>
+                  <goal>generate-report</goal>
+                  <goal>stop-zap</goal>
+                </goals>
               </execution>
             </executions>
           </plugin>

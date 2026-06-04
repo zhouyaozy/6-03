@@ -31,6 +31,11 @@ package org.apache.commons.collections4;
  * <p>
  * #ThreadSafe#
  * </p>
+ * <p>
+ * <strong>Security Note:</strong> The {@code indexOf} method validates the {@code startIndex}
+ * parameter to prevent array index out-of-bounds access. A negative startIndex is normalized
+ * to zero, and a startIndex exceeding the array length returns {@link CollectionUtils#INDEX_NOT_FOUND}.
+ * </p>
  *
  * @since 4.2 (Copied from Apache Commons Lang.)
  */
@@ -75,6 +80,9 @@ final class ArrayUtils {
         }
         if (startIndex < 0) {
             startIndex = 0;
+        }
+        if (startIndex > array.length) {
+            return CollectionUtils.INDEX_NOT_FOUND;
         }
         if (objectToFind == null) {
             for (int i = startIndex; i < array.length; i++) {
