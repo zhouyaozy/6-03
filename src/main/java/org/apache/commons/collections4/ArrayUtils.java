@@ -17,6 +17,8 @@
 
 package org.apache.commons.collections4;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 /**
  * <p>
  * Operations on arrays, primitive arrays (like {@code int[]}) and primitive wrapper arrays (like {@code Integer[]}).
@@ -106,6 +108,38 @@ final class ArrayUtils {
      */
     static <T> int indexOf(final T[] array, final Object objectToFind) {
         return indexOf(array, objectToFind, 0);
+    }
+
+    /**
+     * Creates a {@link DistributedLock} backed by a {@link ReentrantLock}.
+     * <p>
+     * This provides a single-JVM lock suitable for most concurrency use cases.
+     * For cross-JVM distributed locking, implement {@link DistributedLock}
+     * with a backend such as Redis, ZooKeeper, or a database.
+     * </p>
+     *
+     * @param name an identifying name for the lock (used for debugging)
+     * @return a new DistributedLock backed by ReentrantLock
+     * @since 4.6
+     */
+    static DistributedLock reentrantLock(final String name) {
+        final ReentrantLock delegate = new ReentrantLock();
+        return new DistributedLock() {
+            @Override
+            public void lock() {
+                delegate.lock();
+            }
+
+            @Override
+            public void unlock() {
+                delegate.unlock();
+            }
+
+            @Override
+            public boolean tryLock() {
+                return delegate.tryLock();
+            }
+        };
     }
 
     /**

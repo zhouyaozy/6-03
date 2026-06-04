@@ -17,7 +17,12 @@
 package org.apache.commons.collections4;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EmptyStackException;
+import java.util.Objects;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * An implementation of the {@link java.util.Stack} API that is based on an
@@ -33,6 +38,15 @@ import java.util.EmptyStackException;
  * </p>
  * <p>
  * Unlike {@code Stack}, {@code ArrayStack} accepts null entries.
+ * </p>
+ * <p>
+ * <strong>Distributed Lock Support (since 4.6):</strong>
+ * When constructed with a {@link DistributedLock}, all mutable and read
+ * operations acquire the lock before proceeding, eliminating data races
+ * in high-concurrency scenarios. The lock can be backed by technologies
+ * such as Redis, ZooKeeper, or a local {@code ReentrantLock}. Use
+ * {@link ArrayUtils#reentrantLock(String)} for a simple single-JVM lock.
+ * </p>
  * <p>
  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
  * removed {@code Buffer} interface anymore.
@@ -40,6 +54,8 @@ import java.util.EmptyStackException;
  *
  * @param <E> the type of elements in this list
  * @see java.util.Stack
+ * @see DistributedLock
+ * @see ArrayUtils#reentrantLock(String)
  * @since 1.0
  * @deprecated Use {@link java.util.ArrayDeque} instead (available from Java 1.6)
  */
@@ -49,15 +65,25 @@ public class ArrayStack<E> extends ArrayList<E> {
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
 
+    /** The distributed lock for thread safety; {@code null} means no locking. */
+    private final DistributedLock lock;
+
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
      * is controlled by {@code ArrayList} and is currently 10.
+     * <p>
+     * No locking is applied; operations are not thread-safe.
+     * </p>
      */
     public ArrayStack() {
+        this.lock = null;
     }
 
     /**
      * Constructs a new empty {@code ArrayStack} with an initial size.
+     * <p>
+     * No locking is applied; operations are not thread-safe.
+     * </p>
      *
      * @param initialSize  the initial size to use
      * @throws IllegalArgumentException  if the specified initial size
@@ -65,6 +91,39 @@ public class ArrayStack<E> extends ArrayList<E> {
      */
     public ArrayStack(final int initialSize) {
         super(initialSize);
+        this.lock = null;
+    }
+
+    /**
+     * Constructs a new empty {@code ArrayStack} with the given
+     * {@link DistributedLock} for thread-safe operations.
+     * <p>
+     * All mutable and read operations will acquire the lock before
+     * proceeding, solving data races in high-concurrency scenarios.
+     * </p>
+     *
+     * @param lock  the distributed lock to use, must not be null
+     * @throws NullPointerException if lock is null
+     * @since 4.6
+     */
+    public ArrayStack(final DistributedLock lock) {
+        this.lock = Objects.requireNonNull(lock, "lock");
+    }
+
+    /**
+     * Constructs a new empty {@code ArrayStack} with an initial size
+     * and a {@link DistributedLock} for thread-safe operations.
+     *
+     * @param initialSize  the initial size to use
+     * @param lock  the distributed lock to use, must not be null
+     * @throws IllegalArgumentException  if the specified initial size
+     *  is negative
+     * @throws NullPointerException if lock is null
+     * @since 4.6
+     */
+    public ArrayStack(final int initialSize, final DistributedLock lock) {
+        super(initialSize);
+        this.lock = Objects.requireNonNull(lock, "lock");
     }
 
     /**
@@ -87,6 +146,19 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return peekLocked();
+            } finally {
+                l.unlock();
+            }
+        }
+        return peekLocked();
+    }
+
+    private E peekLocked() {
         final int n = size();
         if (n <= 0) {
             throw new EmptyStackException();
@@ -104,6 +176,19 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return peekLocked(n);
+            } finally {
+                l.unlock();
+            }
+        }
+        return peekLocked(n);
+    }
+
+    private E peekLocked(final int n) {
         final int m = size() - n - 1;
         if (m < 0) {
             throw new EmptyStackException();
@@ -118,6 +203,19 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return popLocked();
+            } finally {
+                l.unlock();
+            }
+        }
+        return popLocked();
+    }
+
+    private E popLocked() {
         final int n = size();
         if (n <= 0) {
             throw new EmptyStackException();
@@ -133,6 +231,16 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the item just pushed
      */
     public E push(final E item) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                add(item);
+                return item;
+            } finally {
+                l.unlock();
+            }
+        }
         add(item);
         return item;
     }
@@ -149,8 +257,21 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return searchLocked(object);
+            } finally {
+                l.unlock();
+            }
+        }
+        return searchLocked(object);
+    }
+
+    private int searchLocked(final Object object) {
+        int i = size() - 1;
+        int n = 1;
         while (i >= 0) {
             final Object current = get(i);
             if (object == null && current == null ||
@@ -163,4 +284,431 @@ public class ArrayStack<E> extends ArrayList<E> {
         return -1;
     }
 
+    // -- Override ArrayList mutating methods with lock protection --
+
+    @Override
+    public boolean add(final E e) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.add(e);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.add(e);
+    }
+
+    @Override
+    public void add(final int index, final E element) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                super.add(index, element);
+            } finally {
+                l.unlock();
+            }
+        } else {
+            super.add(index, element);
+        }
+    }
+
+    @Override
+    public boolean addAll(final Collection<? extends E> c) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.addAll(c);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.addAll(c);
+    }
+
+    @Override
+    public boolean addAll(final int index, final Collection<? extends E> c) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.addAll(index, c);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.addAll(index, c);
+    }
+
+    @Override
+    public void clear() {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                super.clear();
+            } finally {
+                l.unlock();
+            }
+        } else {
+            super.clear();
+        }
+    }
+
+    @Override
+    public E remove(final int index) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.remove(index);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.remove(index);
+    }
+
+    @Override
+    public boolean remove(final Object o) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.remove(o);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.remove(o);
+    }
+
+    @Override
+    public boolean removeAll(final Collection<?> c) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.removeAll(c);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.removeAll(c);
+    }
+
+    @Override
+    public boolean removeIf(final Predicate<? super E> filter) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.removeIf(filter);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.removeIf(filter);
+    }
+
+    @Override
+    public boolean retainAll(final Collection<?> c) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.retainAll(c);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.retainAll(c);
+    }
+
+    @Override
+    public E set(final int index, final E element) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.set(index, element);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.set(index, element);
+    }
+
+    @Override
+    public void replaceAll(final UnaryOperator<E> operator) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                super.replaceAll(operator);
+            } finally {
+                l.unlock();
+            }
+        } else {
+            super.replaceAll(operator);
+        }
+    }
+
+    @Override
+    public void sort(final java.util.Comparator<? super E> c) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                super.sort(c);
+            } finally {
+                l.unlock();
+            }
+        } else {
+            super.sort(c);
+        }
+    }
+
+    // -- Override ArrayList read/query methods with lock protection --
+
+    @Override
+    public boolean contains(final Object o) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.contains(o);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.contains(o);
+    }
+
+    @Override
+    public boolean containsAll(final Collection<?> c) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.containsAll(c);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.containsAll(c);
+    }
+
+    @Override
+    public void forEach(final Consumer<? super E> action) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                super.forEach(action);
+            } finally {
+                l.unlock();
+            }
+        } else {
+            super.forEach(action);
+        }
+    }
+
+    @Override
+    public E get(final int index) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.get(index);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.get(index);
+    }
+
+    @Override
+    public int indexOf(final Object o) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.indexOf(o);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.indexOf(o);
+    }
+
+    @Override
+    public boolean isEmpty() {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.isEmpty();
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.isEmpty();
+    }
+
+    @Override
+    public int lastIndexOf(final Object o) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.lastIndexOf(o);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.lastIndexOf(o);
+    }
+
+    @Override
+    public int size() {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.size();
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.size();
+    }
+
+    @Override
+    public Object[] toArray() {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.toArray();
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.toArray();
+    }
+
+    @Override
+    public <T> T[] toArray(final T[] a) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.toArray(a);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.toArray(a);
+    }
+
+    @Override
+    public void ensureCapacity(final int minCapacity) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                super.ensureCapacity(minCapacity);
+            } finally {
+                l.unlock();
+            }
+        } else {
+            super.ensureCapacity(minCapacity);
+        }
+    }
+
+    @Override
+    public void trimToSize() {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                super.trimToSize();
+            } finally {
+                l.unlock();
+            }
+        } else {
+            super.trimToSize();
+        }
+    }
+
+    @Override
+    public Object clone() {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.clone();
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.clone();
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.equals(o);
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.equals(o);
+    }
+
+    @Override
+    public int hashCode() {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.hashCode();
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.hashCode();
+    }
+
+    @Override
+    public String toString() {
+        final DistributedLock l = lock;
+        if (l != null) {
+            l.lock();
+            try {
+                return super.toString();
+            } finally {
+                l.unlock();
+            }
+        }
+        return super.toString();
+    }
+
+    /**
+     * Returns the {@link DistributedLock} used by this stack, or {@code null}
+     * if no lock is configured.
+     *
+     * @return the distributed lock, or null
+     * @since 4.6
+     */
+    public DistributedLock getLock() {
+        return lock;
+    }
 }

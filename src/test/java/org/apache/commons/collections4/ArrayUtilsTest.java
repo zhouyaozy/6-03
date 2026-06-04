@@ -18,6 +18,7 @@ package org.apache.commons.collections4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -69,5 +70,26 @@ class ArrayUtilsTest {
         assertEquals(3, ArrayUtils.indexOf(array, "3"));
         assertEquals(4, ArrayUtils.indexOf(array, null));
         assertEquals(-1, ArrayUtils.indexOf(array, "notInArray"));
+    }
+
+    @Test
+    void testReentrantLockFactory() {
+        final DistributedLock lock = ArrayUtils.reentrantLock("test");
+        assertNotNull(lock);
+
+        lock.lock();
+        try {
+            assertTrue(lock.tryLock());
+        } finally {
+            lock.unlock();
+            lock.unlock();
+        }
+    }
+
+    @Test
+    void testReentrantLockNonReentrantTryLock() {
+        final DistributedLock lock = ArrayUtils.reentrantLock("test2");
+        assertTrue(lock.tryLock());
+        lock.unlock();
     }
 }
