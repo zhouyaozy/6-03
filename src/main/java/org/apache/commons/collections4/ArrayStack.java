@@ -81,17 +81,25 @@ public class ArrayStack<E> extends ArrayList<E> {
     }
 
     /**
+     * Checks whether the stack is empty and throws an exception if it is.
+     *
+     * @throws EmptyStackException if the stack is empty
+     */
+    private void checkEmpty() throws EmptyStackException {
+        if (isEmpty()) {
+            throw new EmptyStackException();
+        }
+    }
+
+    /**
      * Returns the top item off of this stack without removing it.
      *
      * @return the top item on the stack
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return get(n - 1);
+        checkEmpty();
+        return get(size() - 1);
     }
 
     /**
@@ -118,11 +126,8 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return remove(n - 1);
+        checkEmpty();
+        return remove(size() - 1);
     }
 
     /**
@@ -149,18 +154,8 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
-        while (i >= 0) {
-            final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
-                return n;
-            }
-            i--;
-            n++;
-        }
-        return -1;
+        final int i = lastIndexOf(object);
+        return i >= 0 ? size() - i : -1;
     }
 
 }

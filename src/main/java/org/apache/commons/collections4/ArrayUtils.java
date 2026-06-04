@@ -17,6 +17,8 @@
 
 package org.apache.commons.collections4;
 
+import java.util.Objects;
+
 /**
  * <p>
  * Operations on arrays, primitive arrays (like {@code int[]}) and primitive wrapper arrays (like {@code Integer[]}).
@@ -76,17 +78,9 @@ final class ArrayUtils {
         if (startIndex < 0) {
             startIndex = 0;
         }
-        if (objectToFind == null) {
-            for (int i = startIndex; i < array.length; i++) {
-                if (array[i] == null) {
-                    return i;
-                }
-            }
-        } else {
-            for (int i = startIndex; i < array.length; i++) {
-                if (objectToFind.equals(array[i])) {
-                    return i;
-                }
+        for (int i = startIndex; i < array.length; i++) {
+            if (Objects.equals(objectToFind, array[i])) {
+                return i;
             }
         }
         return CollectionUtils.INDEX_NOT_FOUND;
