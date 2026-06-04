@@ -18,6 +18,8 @@ package org.apache.commons.collections4;
 
 import java.util.ArrayList;
 import java.util.EmptyStackException;
+import java.io.Serializable;
+import java.util.Iterator;
 
 /**
  * An implementation of the {@link java.util.Stack} API that is based on an
@@ -44,16 +46,19 @@ import java.util.EmptyStackException;
  * @deprecated Use {@link java.util.ArrayDeque} instead (available from Java 1.6)
  */
 @Deprecated
-public class ArrayStack<E> extends ArrayList<E> {
+public class ArrayStack<E> implements Serializable {
 
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
+
+    private final ArrayList<E> list;
 
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
      * is controlled by {@code ArrayList} and is currently 10.
      */
     public ArrayStack() {
+        list = new ArrayList<>();
     }
 
     /**
@@ -64,7 +69,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  is negative
      */
     public ArrayStack(final int initialSize) {
-        super(initialSize);
+        list = new ArrayList<>(initialSize);
     }
 
     /**
@@ -81,17 +86,26 @@ public class ArrayStack<E> extends ArrayList<E> {
     }
 
     /**
+     * Returns true if this stack is empty.
+     *
+     * @return true if the stack is empty
+     */
+    public boolean isEmpty() {
+        return list.isEmpty();
+    }
+
+    /**
      * Returns the top item off of this stack without removing it.
      *
      * @return the top item on the stack
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
+        final int n = list.size();
         if (n <= 0) {
             throw new EmptyStackException();
         }
-        return get(n - 1);
+        return list.get(n - 1);
     }
 
     /**
@@ -104,11 +118,11 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
-        final int m = size() - n - 1;
+        final int m = list.size() - n - 1;
         if (m < 0) {
             throw new EmptyStackException();
         }
-        return get(m);
+        return list.get(m);
     }
 
     /**
@@ -118,11 +132,11 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
+        final int n = list.size();
         if (n <= 0) {
             throw new EmptyStackException();
         }
-        return remove(n - 1);
+        return list.remove(n - 1);
     }
 
     /**
@@ -133,7 +147,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the item just pushed
      */
     public E push(final E item) {
-        add(item);
+        list.add(item);
         return item;
     }
 
@@ -149,10 +163,10 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
+        int i = list.size() - 1;        // Current index
         int n = 1;                 // Current distance
         while (i >= 0) {
-            final Object current = get(i);
+            final Object current = list.get(i);
             if (object == null && current == null ||
                 object != null && object.equals(current)) {
                 return n;
@@ -161,6 +175,29 @@ public class ArrayStack<E> extends ArrayList<E> {
             n++;
         }
         return -1;
+    }
+
+    /**
+     * Returns the number of elements in this stack.
+     *
+     * @return the number of elements in this stack
+     */
+    public int size() {
+        return list.size();
+    }
+
+    /**
+     * Returns an iterator over the elements in this stack.
+     *
+     * @return an iterator over the elements in this stack
+     */
+    public Iterator<E> iterator() {
+        return list.iterator();
+    }
+
+    @Override
+    public String toString() {
+        return list.toString();
     }
 
 }

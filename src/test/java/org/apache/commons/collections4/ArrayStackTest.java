@@ -29,14 +29,8 @@ import org.junit.jupiter.api.Test;
  * Tests ArrayStack.
  */
 @SuppressWarnings("deprecation") // we test a deprecated class
-public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+public class ArrayStackTest<E> {
 
-    @Override
-    public String getCompatibilityVersion() {
-        return "4";
-    }
-
-    @Override
     public ArrayStack<E> makeObject() {
         return new ArrayStack<>();
     }
@@ -82,7 +76,6 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
     }
 
     @Test
-    @Override
     @SuppressWarnings("unchecked")
     public void testSearch() {
         final ArrayStack<E> stack = makeObject();
