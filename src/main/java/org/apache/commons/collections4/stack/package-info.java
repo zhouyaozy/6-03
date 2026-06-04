@@ -16,6 +16,12 @@
  */
 
 /**
- * Interfaces and utilities shared across all packages.
+ * Implements the {@link java.util.Stack Stack} API.
+ * <p>
+ * The following implementations are provided in the package:
+ * </p>
+ * <ul>
+ *   <li>ArrayStack - a non synchronized Stack that follows the same API as {@code java.util.Stack}</li>
+ * </ul>
  */
-package org.apache.commons.collections4;
+package org.apache.commons.collections4.stack;
