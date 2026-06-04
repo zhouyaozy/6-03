@@ -87,11 +87,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return get(n - 1);
+        return get(requireNonEmpty() - 1);
     }
 
     /**
@@ -104,7 +100,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
-        final int m = size() - n - 1;
+        final int m = requireNonEmpty() - n - 1;
         if (m < 0) {
             throw new EmptyStackException();
         }
@@ -118,11 +114,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return remove(n - 1);
+        return remove(requireNonEmpty() - 1);
     }
 
     /**
@@ -149,18 +141,16 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
-        while (i >= 0) {
-            final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
-                return n;
-            }
-            i--;
-            n++;
+        final int i = lastIndexOf(object);
+        return i < 0 ? -1 : size() - i;
+    }
+
+    private int requireNonEmpty() {
+        final int n = size();
+        if (n <= 0) {
+            throw new EmptyStackException();
         }
-        return -1;
+        return n;
     }
 
 }
