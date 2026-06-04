@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.commons.collections4;
+package org.apache.commons.collections4.stack;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -23,12 +23,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.EmptyStackException;
 
+import org.apache.commons.collections4.AbstractArrayListTest;
 import org.junit.jupiter.api.Test;
 
 /**
  * Tests ArrayStack.
  */
-@SuppressWarnings("deprecation") // we test a deprecated class
+@SuppressWarnings("deprecation")
 public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
 
     @Override
@@ -82,7 +83,6 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
     }
 
     @Test
-    @Override
     @SuppressWarnings("unchecked")
     public void testSearch() {
         final ArrayStack<E> stack = makeObject();
@@ -96,12 +96,5 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
         assertEquals(-1, stack.search("Missing Item"),
                 "Cannot find 'Missing Item'");
     }
-
-//    void testCreate() throws Exception {
-//        resetEmpty();
-//        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.emptyCollection.version4.obj");
-//        resetFull();
-//        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.fullCollection.version4.obj");
-//    }
 
 }

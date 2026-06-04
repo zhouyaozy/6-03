@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.commons.collections4;
+package org.apache.commons.collections4.stack;
 
 import java.util.ArrayList;
 import java.util.EmptyStackException;
@@ -149,8 +149,8 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
+        int i = size() - 1;
+        int n = 1;
         while (i >= 0) {
             final Object current = get(i);
             if (object == null && current == null ||

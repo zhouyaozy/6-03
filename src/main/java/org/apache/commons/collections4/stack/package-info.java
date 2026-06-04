@@ -16,6 +16,16 @@
  */
 
 /**
- * Interfaces and utilities shared across all packages.
+ * Stack implementations based on the {@link java.util.Stack} API.
+ * <p>
+ * This package contains stack data structure implementations that follow
+ * the last-in-first-out (LIFO) principle.
+ * </p>
+ * <ul>
+ *   <li>{@link org.apache.commons.collections4.stack.ArrayStack} - a non-synchronized Stack 
+ *       implementation based on {@link java.util.ArrayList}</li>
+ * </ul>
+ * 
+ * @since 4.1
  */
-package org.apache.commons.collections4;
+package org.apache.commons.collections4.stack;
