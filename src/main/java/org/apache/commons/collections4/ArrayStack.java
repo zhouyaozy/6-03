@@ -33,6 +33,7 @@ import java.util.EmptyStackException;
  * </p>
  * <p>
  * Unlike {@code Stack}, {@code ArrayStack} accepts null entries.
+ * </p>
  * <p>
  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
  * removed {@code Buffer} interface anymore.
@@ -87,11 +88,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return get(n - 1);
+        return peek(0);
     }
 
     /**
@@ -118,11 +115,10 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
+        if (size() <= 0) {
             throw new EmptyStackException();
         }
-        return remove(n - 1);
+        return remove(size() - 1);
     }
 
     /**
@@ -149,18 +145,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
-        while (i >= 0) {
-            final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
-                return n;
-            }
-            i--;
-            n++;
-        }
-        return -1;
+        return ArrayUtils.lastIndexFromEnd(this, object);
     }
 
 }

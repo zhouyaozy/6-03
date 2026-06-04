@@ -1,0 +1,140 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..82dc7ebe9 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -33,6 +33,7 @@ import java.util.EmptyStackException;
+  * </p>
+  * <p>
+  * Unlike {@code Stack}, {@code ArrayStack} accepts null entries.
++ * </p>
+  * <p>
+  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
+  * removed {@code Buffer} interface anymore.
+@@ -87,11 +88,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E peek() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(n - 1);
++        return peek(0);
+     }
+ 
+     /**
+@@ -118,11 +115,10 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E pop() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
++        if (size() <= 0) {
+             throw new EmptyStackException();
+         }
+-        return remove(n - 1);
++        return remove(size() - 1);
+     }
+ 
+     /**
+@@ -149,18 +145,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the 1-based depth into the stack of the object, or -1 if not found
+      */
+     public int search(final Object object) {
+-        int i = size() - 1;        // Current index
+-        int n = 1;                 // Current distance
+-        while (i >= 0) {
+-            final Object current = get(i);
+-            if (object == null && current == null ||
+-                object != null && object.equals(current)) {
+-                return n;
+-            }
+-            i--;
+-            n++;
+-        }
+-        return -1;
++        return ArrayUtils.lastIndexFromEnd(this, object);
+     }
+ 
+ }
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayUtils.java b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+index 8fdbab144..dccf6140c 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayUtils.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+@@ -17,6 +17,9 @@
+ 
+ package org.apache.commons.collections4;
+ 
++import java.util.List;
++import java.util.ListIterator;
++
+ /**
+  * <p>
+  * Operations on arrays, primitive arrays (like {@code int[]}) and primitive wrapper arrays (like {@code Integer[]}).
+@@ -41,7 +44,7 @@ final class ArrayUtils {
+      * Checks if the object is in the given array.
+      * </p>
+      * <p>
+-     * The method returns {@code false} if a {@code null} array is passed in.
++     * This method returns {@code false} if a {@code null} array is passed in.
+      * </p>
+      *
+      * @param array        the array to search, may be {@code null}.
+@@ -102,12 +105,56 @@ final class ArrayUtils {
+      *
+      * @param array        the array to search for the object, may be {@code null}.
+      * @param objectToFind the object to find, may be {@code null}.
+-     * @return the index of the object within the array, {@link CollectionUtils#INDEX_NOT_FOUND} ({@code -1}) if not found or {@code null} array input.
++     * @return the index of the object within the array, {@link CollectionUtils#INDEX_NOT_FOUND} ({@code -1}) if not found or {@code null}
++     *         array input.
+      */
+     static <T> int indexOf(final T[] array, final Object objectToFind) {
+         return indexOf(array, objectToFind, 0);
+     }
+ 
++    /**
++     * Null-safe comparison of two objects.
++     *
++     * @param o1 the first object
++     * @param o2 the second object
++     * @return {@code true} if the objects are equal or both are {@code null}
++     */
++    static boolean equals(final Object o1, final Object o2) {
++        if (o1 == o2) {
++            return true;
++        }
++        if (o1 == null || o2 == null) {
++            return false;
++        }
++        return o1.equals(o2);
++    }
++
++    /**
++     * Finds the 1-based position of the distance from the end of the list
++     * that the specified object exists, starting from the last element.
++     * Returns -1 if the object is not found.
++     *
++     * @param list the list to search
++     * @param object the object to find
++     * @param <E> the type of elements in the list
++     * @return 1-based position from the end, or -1 if not found
++     */
++    static <E> int lastIndexFromEnd(final List<E> list, final Object object) {
++        if (list == null) {
++            return CollectionUtils.INDEX_NOT_FOUND;
++        }
++        int position = 1;
++        final ListIterator<E> iterator = list.listIterator(list.size());
++        while (iterator.hasPrevious()) {
++            final E current = iterator.previous();
++            if (equals(object, current)) {
++                return position;
++            }
++            position++;
++        }
++        return CollectionUtils.INDEX_NOT_FOUND;
++    }
++
+     /**
+      * Don't allow instances.
+      */

@@ -17,6 +17,9 @@
 
 package org.apache.commons.collections4;
 
+import java.util.List;
+import java.util.ListIterator;
+
 /**
  * <p>
  * Operations on arrays, primitive arrays (like {@code int[]}) and primitive wrapper arrays (like {@code Integer[]}).
@@ -41,7 +44,7 @@ final class ArrayUtils {
      * Checks if the object is in the given array.
      * </p>
      * <p>
-     * The method returns {@code false} if a {@code null} array is passed in.
+     * This method returns {@code false} if a {@code null} array is passed in.
      * </p>
      *
      * @param array        the array to search, may be {@code null}.
@@ -102,10 +105,54 @@ final class ArrayUtils {
      *
      * @param array        the array to search for the object, may be {@code null}.
      * @param objectToFind the object to find, may be {@code null}.
-     * @return the index of the object within the array, {@link CollectionUtils#INDEX_NOT_FOUND} ({@code -1}) if not found or {@code null} array input.
+     * @return the index of the object within the array, {@link CollectionUtils#INDEX_NOT_FOUND} ({@code -1}) if not found or {@code null}
+     *         array input.
      */
     static <T> int indexOf(final T[] array, final Object objectToFind) {
         return indexOf(array, objectToFind, 0);
+    }
+
+    /**
+     * Null-safe comparison of two objects.
+     *
+     * @param o1 the first object
+     * @param o2 the second object
+     * @return {@code true} if the objects are equal or both are {@code null}
+     */
+    static boolean equals(final Object o1, final Object o2) {
+        if (o1 == o2) {
+            return true;
+        }
+        if (o1 == null || o2 == null) {
+            return false;
+        }
+        return o1.equals(o2);
+    }
+
+    /**
+     * Finds the 1-based position of the distance from the end of the list
+     * that the specified object exists, starting from the last element.
+     * Returns -1 if the object is not found.
+     *
+     * @param list the list to search
+     * @param object the object to find
+     * @param <E> the type of elements in the list
+     * @return 1-based position from the end, or -1 if not found
+     */
+    static <E> int lastIndexFromEnd(final List<E> list, final Object object) {
+        if (list == null) {
+            return CollectionUtils.INDEX_NOT_FOUND;
+        }
+        int position = 1;
+        final ListIterator<E> iterator = list.listIterator(list.size());
+        while (iterator.hasPrevious()) {
+            final E current = iterator.previous();
+            if (equals(object, current)) {
+                return position;
+            }
+            position++;
+        }
+        return CollectionUtils.INDEX_NOT_FOUND;
     }
 
     /**
