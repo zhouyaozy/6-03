@@ -16,6 +16,9 @@
  */
 package org.apache.commons.collections4;
 
+import org.apache.commons.collections4.lock.DistributedLock;
+import org.apache.commons.collections4.lock.LocalDistributedLock;
+
 import java.util.ArrayList;
 import java.util.EmptyStackException;
 
@@ -37,9 +40,13 @@ import java.util.EmptyStackException;
  * <strong>Note:</strong> From version 4.0 onwards, this class does not implement the
  * removed {@code Buffer} interface anymore.
  * </p>
+ * <p>
+ * For distributed lock support, use {@link SynchronizedDistributedArrayStack}.
+ * </p>
  *
  * @param <E> the type of elements in this list
  * @see java.util.Stack
+ * @see SynchronizedDistributedArrayStack
  * @since 1.0
  * @deprecated Use {@link java.util.ArrayDeque} instead (available from Java 1.6)
  */
@@ -48,6 +55,28 @@ public class ArrayStack<E> extends ArrayList<E> {
 
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
+
+    /**
+     * Creates a synchronized distributed version of this stack.
+     *
+     * @param <E> the type of elements in this stack
+     * @return a new synchronized distributed array stack
+     */
+    public static <E> SynchronizedDistributedArrayStack<E> synchronizedDistributed() {
+        return SynchronizedDistributedArrayStack.synchronizedDistributedArrayStack(new ArrayStack<>());
+    }
+
+    /**
+     * Creates a synchronized distributed version of this stack using a custom lock.
+     *
+     * @param <E> the type of elements in this stack
+     * @param lock the distributed lock to use, must not be null
+     * @return a new synchronized distributed array stack
+     * @throws NullPointerException if lock is null
+     */
+    public static <E> SynchronizedDistributedArrayStack<E> synchronizedDistributed(final DistributedLock lock) {
+        return SynchronizedDistributedArrayStack.synchronizedDistributedArrayStack(new ArrayStack<>(), lock);
+    }
 
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
