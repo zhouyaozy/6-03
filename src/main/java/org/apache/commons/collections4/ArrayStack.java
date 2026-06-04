@@ -18,6 +18,9 @@ package org.apache.commons.collections4;
 
 import java.util.ArrayList;
 import java.util.EmptyStackException;
+import java.util.Objects;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Supplier;
 
 /**
  * An implementation of the {@link java.util.Stack} API that is based on an
@@ -46,8 +49,35 @@ import java.util.EmptyStackException;
 @Deprecated
 public class ArrayStack<E> extends ArrayList<E> {
 
+    public static class CircuitBreakerOpenException extends RejectedExecutionException {
+
+        private static final long serialVersionUID = 1L;
+
+        CircuitBreakerOpenException(final String message) {
+            super(message);
+        }
+    }
+
+    public static class RequestRateLimitException extends RejectedExecutionException {
+
+        private static final long serialVersionUID = 1L;
+
+        RequestRateLimitException(final String message) {
+            super(message);
+        }
+    }
+
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
+
+    private transient int maxRequestsPerWindow;
+    private transient long requestWindowMillis;
+    private transient long[] requestTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+    private transient int failureThreshold;
+    private transient long failureWindowMillis;
+    private transient long circuitOpenMillis;
+    private transient long[] failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+    private transient long circuitOpenUntil = Long.MIN_VALUE;
 
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
@@ -67,6 +97,44 @@ public class ArrayStack<E> extends ArrayList<E> {
         super(initialSize);
     }
 
+    public void configureCircuitBreaker(final int requestFailureThreshold, final long requestFailureWindowMillis,
+            final long requestCircuitOpenMillis) {
+        validatePositive(requestFailureThreshold, "requestFailureThreshold");
+        validatePositive(requestFailureWindowMillis, "requestFailureWindowMillis");
+        validatePositive(requestCircuitOpenMillis, "requestCircuitOpenMillis");
+        failureThreshold = requestFailureThreshold;
+        failureWindowMillis = requestFailureWindowMillis;
+        circuitOpenMillis = requestCircuitOpenMillis;
+        failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+        circuitOpenUntil = Long.MIN_VALUE;
+    }
+
+    public void configureRequestRateLimit(final int requestMaxRequests, final long requestWindowMillis) {
+        validatePositive(requestMaxRequests, "requestMaxRequests");
+        validatePositive(requestWindowMillis, "requestWindowMillis");
+        maxRequestsPerWindow = requestMaxRequests;
+        this.requestWindowMillis = requestWindowMillis;
+        requestTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+    }
+
+    long currentTimeMillis() {
+        return System.currentTimeMillis();
+    }
+
+    public void disableCircuitBreaker() {
+        failureThreshold = 0;
+        failureWindowMillis = 0;
+        circuitOpenMillis = 0;
+        failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+        circuitOpenUntil = Long.MIN_VALUE;
+    }
+
+    public void disableRequestRateLimit() {
+        maxRequestsPerWindow = 0;
+        requestWindowMillis = 0;
+        requestTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+    }
+
     /**
      * Return {@code true} if this stack is currently empty.
      * <p>
@@ -80,6 +148,27 @@ public class ArrayStack<E> extends ArrayList<E> {
         return isEmpty();
     }
 
+    public <T> T executeRequest(final Supplier<T> supplier) {
+        Objects.requireNonNull(supplier, "supplier");
+        final long now = currentTimeMillis();
+        beforeRequest(now);
+        try {
+            final T value = supplier.get();
+            onRequestSuccess();
+            return value;
+        } catch (final RuntimeException ex) {
+            onRequestFailure(now);
+            throw ex;
+        } catch (final Error ex) {
+            onRequestFailure(now);
+            throw ex;
+        }
+    }
+
+    public boolean isCircuitBreakerOpen() {
+        return isCircuitBreakerOpen(currentTimeMillis());
+    }
+
     /**
      * Returns the top item off of this stack without removing it.
      *
@@ -87,11 +176,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return get(n - 1);
+        return executeRequest(this::peekInternal);
     }
 
     /**
@@ -104,11 +189,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
-        final int m = size() - n - 1;
-        if (m < 0) {
-            throw new EmptyStackException();
-        }
-        return get(m);
+        return executeRequest(() -> peekInternal(n));
     }
 
     /**
@@ -118,11 +199,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return remove(n - 1);
+        return executeRequest(this::popInternal);
     }
 
     /**
@@ -133,8 +210,13 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the item just pushed
      */
     public E push(final E item) {
-        add(item);
-        return item;
+        return executeRequest(() -> pushInternal(item));
+    }
+
+    public void resetResilience() {
+        requestTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+        failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+        circuitOpenUntil = Long.MIN_VALUE;
     }
 
     /**
@@ -149,10 +231,82 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
+        return executeRequest(() -> searchInternal(object));
+    }
+
+    private void beforeRequest(final long now) {
+        if (isCircuitBreakerOpen(now)) {
+            throw new CircuitBreakerOpenException("Circuit breaker is open");
+        }
+        if (circuitOpenUntil != Long.MIN_VALUE) {
+            failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+            circuitOpenUntil = Long.MIN_VALUE;
+        }
+        if (maxRequestsPerWindow > 0) {
+            requestTimestamps = ArrayUtils.removeValuesBefore(requestTimestamps, now - requestWindowMillis + 1);
+            if (requestTimestamps.length >= maxRequestsPerWindow) {
+                throw new RequestRateLimitException("Request rate limit exceeded");
+            }
+            requestTimestamps = ArrayUtils.add(requestTimestamps, now);
+        }
+    }
+
+    private boolean isCircuitBreakerOpen(final long now) {
+        return failureThreshold > 0 && circuitOpenUntil > now;
+    }
+
+    private void onRequestFailure(final long now) {
+        if (failureThreshold <= 0) {
+            return;
+        }
+        failureTimestamps = ArrayUtils.removeValuesBefore(failureTimestamps, now - failureWindowMillis + 1);
+        failureTimestamps = ArrayUtils.add(failureTimestamps, now);
+        if (failureTimestamps.length >= failureThreshold) {
+            circuitOpenUntil = now + circuitOpenMillis;
+        }
+    }
+
+    private void onRequestSuccess() {
+        if (failureThreshold > 0) {
+            failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
+            circuitOpenUntil = Long.MIN_VALUE;
+        }
+    }
+
+    private E peekInternal() throws EmptyStackException {
+        final int n = size();
+        if (n <= 0) {
+            throw new EmptyStackException();
+        }
+        return super.get(n - 1);
+    }
+
+    private E peekInternal(final int n) throws EmptyStackException {
+        final int m = size() - n - 1;
+        if (m < 0) {
+            throw new EmptyStackException();
+        }
+        return super.get(m);
+    }
+
+    private E popInternal() throws EmptyStackException {
+        final int n = size();
+        if (n <= 0) {
+            throw new EmptyStackException();
+        }
+        return super.remove(n - 1);
+    }
+
+    private E pushInternal(final E item) {
+        super.add(item);
+        return item;
+    }
+
+    private int searchInternal(final Object object) {
+        int i = size() - 1;
+        int n = 1;
         while (i >= 0) {
-            final Object current = get(i);
+            final Object current = super.get(i);
             if (object == null && current == null ||
                 object != null && object.equals(current)) {
                 return n;
@@ -161,6 +315,12 @@ public class ArrayStack<E> extends ArrayList<E> {
             n++;
         }
         return -1;
+    }
+
+    private void validatePositive(final long value, final String name) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(name + " must be greater than zero");
+        }
     }
 
 }

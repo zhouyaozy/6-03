@@ -28,8 +28,24 @@ import org.junit.jupiter.api.Test;
 /**
  * Tests ArrayStack.
  */
-@SuppressWarnings("deprecation") // we test a deprecated class
+@SuppressWarnings("deprecation")
 public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+
+    private static final class TestArrayStack<T> extends ArrayStack<T> {
+
+        private static final long serialVersionUID = 1L;
+
+        private long now;
+
+        void setCurrentTimeMillis(final long currentTimeMillis) {
+            now = currentTimeMillis;
+        }
+
+        @Override
+        long currentTimeMillis() {
+            return now;
+        }
+    }
 
     @Override
     public String getCompatibilityVersion() {
@@ -39,6 +55,24 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
     @Override
     public ArrayStack<E> makeObject() {
         return new ArrayStack<>();
+    }
+
+    @Test
+    void testCircuitBreakerOpensAfterRepeatedFailures() {
+        final TestArrayStack<String> stack = new TestArrayStack<>();
+        stack.configureCircuitBreaker(2, 1000L, 500L);
+
+        assertThrows(EmptyStackException.class, stack::pop);
+        assertFalse(stack.isCircuitBreakerOpen());
+
+        assertThrows(EmptyStackException.class, stack::pop);
+        assertTrue(stack.isCircuitBreakerOpen());
+        assertThrows(ArrayStack.CircuitBreakerOpenException.class, stack::peek);
+
+        stack.setCurrentTimeMillis(500L);
+        stack.push("recovered");
+        assertFalse(stack.isCircuitBreakerOpen());
+        assertEquals("recovered", stack.peek());
     }
 
     @Test
@@ -82,6 +116,19 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
     }
 
     @Test
+    void testRequestRateLimitBlocksExcessiveRequests() {
+        final TestArrayStack<String> stack = new TestArrayStack<>();
+        stack.configureRequestRateLimit(2, 1000L);
+
+        stack.push("first");
+        stack.push("second");
+        assertThrows(ArrayStack.RequestRateLimitException.class, stack::peek);
+
+        stack.setCurrentTimeMillis(1000L);
+        assertEquals("second", stack.peek());
+    }
+
+    @Test
     @Override
     @SuppressWarnings("unchecked")
     public void testSearch() {
@@ -96,12 +143,5 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
         assertEquals(-1, stack.search("Missing Item"),
                 "Cannot find 'Missing Item'");
     }
-
-//    void testCreate() throws Exception {
-//        resetEmpty();
-//        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.emptyCollection.version4.obj");
-//        resetFull();
-//        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.fullCollection.version4.obj");
-//    }
 
 }

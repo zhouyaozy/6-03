@@ -16,6 +16,7 @@
  */
 package org.apache.commons.collections4;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -23,6 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
 
 class ArrayUtilsTest {
+
+    @Test
+    void testAdd() {
+        assertArrayEquals(new long[] { 1L }, ArrayUtils.add(null, 1L));
+        assertArrayEquals(new long[] { 1L, 2L }, ArrayUtils.add(new long[] { 1L }, 2L));
+    }
 
     @Test
     void testContains() {
@@ -47,7 +54,6 @@ class ArrayUtilsTest {
 
             @Override
             public int hashCode() {
-                // Pairs with equals()
                 return super.hashCode();
             }
         }
@@ -69,5 +75,12 @@ class ArrayUtilsTest {
         assertEquals(3, ArrayUtils.indexOf(array, "3"));
         assertEquals(4, ArrayUtils.indexOf(array, null));
         assertEquals(-1, ArrayUtils.indexOf(array, "notInArray"));
+    }
+
+    @Test
+    void testRemoveValuesBefore() {
+        assertArrayEquals(ArrayUtils.EMPTY_LONG_ARRAY, ArrayUtils.removeValuesBefore(null, 10L));
+        assertArrayEquals(ArrayUtils.EMPTY_LONG_ARRAY, ArrayUtils.removeValuesBefore(new long[] { 1L, 2L }, 3L));
+        assertArrayEquals(new long[] { 2L, 3L }, ArrayUtils.removeValuesBefore(new long[] { 1L, 2L, 3L }, 2L));
     }
 }

@@ -36,6 +36,8 @@ package org.apache.commons.collections4;
  */
 final class ArrayUtils {
 
+    static final long[] EMPTY_LONG_ARRAY = {};
+
     /**
      * <p>
      * Checks if the object is in the given array.
@@ -50,6 +52,16 @@ final class ArrayUtils {
      */
     static boolean contains(final Object[] array, final Object objectToFind) {
         return indexOf(array, objectToFind) != CollectionUtils.INDEX_NOT_FOUND;
+    }
+
+    static long[] add(final long[] array, final long value) {
+        final int length = array == null ? 0 : array.length;
+        final long[] newArray = new long[length + 1];
+        if (length > 0) {
+            System.arraycopy(array, 0, newArray, 0, length);
+        }
+        newArray[length] = value;
+        return newArray;
     }
 
     /**
@@ -106,6 +118,25 @@ final class ArrayUtils {
      */
     static <T> int indexOf(final T[] array, final Object objectToFind) {
         return indexOf(array, objectToFind, 0);
+    }
+
+    static long[] removeValuesBefore(final long[] array, final long threshold) {
+        if (array == null || array.length == 0) {
+            return EMPTY_LONG_ARRAY;
+        }
+        int startIndex = 0;
+        while (startIndex < array.length && array[startIndex] < threshold) {
+            startIndex++;
+        }
+        if (startIndex == 0) {
+            return array;
+        }
+        if (startIndex == array.length) {
+            return EMPTY_LONG_ARRAY;
+        }
+        final long[] newArray = new long[array.length - startIndex];
+        System.arraycopy(array, startIndex, newArray, 0, newArray.length);
+        return newArray;
     }
 
     /**

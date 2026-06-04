@@ -1,0 +1,465 @@
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..9267fd800 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -18,6 +18,9 @@ package org.apache.commons.collections4;
+ 
+ import java.util.ArrayList;
+ import java.util.EmptyStackException;
++import java.util.Objects;
++import java.util.concurrent.RejectedExecutionException;
++import java.util.function.Supplier;
+ 
+ /**
+  * An implementation of the {@link java.util.Stack} API that is based on an
+@@ -46,9 +49,36 @@ import java.util.EmptyStackException;
+ @Deprecated
+ public class ArrayStack<E> extends ArrayList<E> {
+ 
++    public static class CircuitBreakerOpenException extends RejectedExecutionException {
++
++        private static final long serialVersionUID = 1L;
++
++        CircuitBreakerOpenException(final String message) {
++            super(message);
++        }
++    }
++
++    public static class RequestRateLimitException extends RejectedExecutionException {
++
++        private static final long serialVersionUID = 1L;
++
++        RequestRateLimitException(final String message) {
++            super(message);
++        }
++    }
++
+     /** Ensure serialization compatibility */
+     private static final long serialVersionUID = 2130079159931574599L;
+ 
++    private transient int maxRequestsPerWindow;
++    private transient long requestWindowMillis;
++    private transient long[] requestTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++    private transient int failureThreshold;
++    private transient long failureWindowMillis;
++    private transient long circuitOpenMillis;
++    private transient long[] failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++    private transient long circuitOpenUntil = Long.MIN_VALUE;
++
+     /**
+      * Constructs a new empty {@code ArrayStack}. The initial size
+      * is controlled by {@code ArrayList} and is currently 10.
+@@ -67,6 +97,44 @@ public class ArrayStack<E> extends ArrayList<E> {
+         super(initialSize);
+     }
+ 
++    public void configureCircuitBreaker(final int requestFailureThreshold, final long requestFailureWindowMillis,
++            final long requestCircuitOpenMillis) {
++        validatePositive(requestFailureThreshold, "requestFailureThreshold");
++        validatePositive(requestFailureWindowMillis, "requestFailureWindowMillis");
++        validatePositive(requestCircuitOpenMillis, "requestCircuitOpenMillis");
++        failureThreshold = requestFailureThreshold;
++        failureWindowMillis = requestFailureWindowMillis;
++        circuitOpenMillis = requestCircuitOpenMillis;
++        failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++        circuitOpenUntil = Long.MIN_VALUE;
++    }
++
++    public void configureRequestRateLimit(final int requestMaxRequests, final long requestWindowMillis) {
++        validatePositive(requestMaxRequests, "requestMaxRequests");
++        validatePositive(requestWindowMillis, "requestWindowMillis");
++        maxRequestsPerWindow = requestMaxRequests;
++        this.requestWindowMillis = requestWindowMillis;
++        requestTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++    }
++
++    long currentTimeMillis() {
++        return System.currentTimeMillis();
++    }
++
++    public void disableCircuitBreaker() {
++        failureThreshold = 0;
++        failureWindowMillis = 0;
++        circuitOpenMillis = 0;
++        failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++        circuitOpenUntil = Long.MIN_VALUE;
++    }
++
++    public void disableRequestRateLimit() {
++        maxRequestsPerWindow = 0;
++        requestWindowMillis = 0;
++        requestTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++    }
++
+     /**
+      * Return {@code true} if this stack is currently empty.
+      * <p>
+@@ -80,6 +148,27 @@ public class ArrayStack<E> extends ArrayList<E> {
+         return isEmpty();
+     }
+ 
++    public <T> T executeRequest(final Supplier<T> supplier) {
++        Objects.requireNonNull(supplier, "supplier");
++        final long now = currentTimeMillis();
++        beforeRequest(now);
++        try {
++            final T value = supplier.get();
++            onRequestSuccess();
++            return value;
++        } catch (final RuntimeException ex) {
++            onRequestFailure(now);
++            throw ex;
++        } catch (final Error ex) {
++            onRequestFailure(now);
++            throw ex;
++        }
++    }
++
++    public boolean isCircuitBreakerOpen() {
++        return isCircuitBreakerOpen(currentTimeMillis());
++    }
++
+     /**
+      * Returns the top item off of this stack without removing it.
+      *
+@@ -87,11 +176,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E peek() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(n - 1);
++        return executeRequest(this::peekInternal);
+     }
+ 
+     /**
+@@ -104,11 +189,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *  stack to satisfy this request
+      */
+     public E peek(final int n) throws EmptyStackException {
+-        final int m = size() - n - 1;
+-        if (m < 0) {
+-            throw new EmptyStackException();
+-        }
+-        return get(m);
++        return executeRequest(() -> peekInternal(n));
+     }
+ 
+     /**
+@@ -118,11 +199,7 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @throws EmptyStackException  if the stack is empty
+      */
+     public E pop() throws EmptyStackException {
+-        final int n = size();
+-        if (n <= 0) {
+-            throw new EmptyStackException();
+-        }
+-        return remove(n - 1);
++        return executeRequest(this::popInternal);
+     }
+ 
+     /**
+@@ -133,8 +210,13 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the item just pushed
+      */
+     public E push(final E item) {
+-        add(item);
+-        return item;
++        return executeRequest(() -> pushInternal(item));
++    }
++
++    public void resetResilience() {
++        requestTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++        failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++        circuitOpenUntil = Long.MIN_VALUE;
+     }
+ 
+     /**
+@@ -149,10 +231,82 @@ public class ArrayStack<E> extends ArrayList<E> {
+      * @return the 1-based depth into the stack of the object, or -1 if not found
+      */
+     public int search(final Object object) {
+-        int i = size() - 1;        // Current index
+-        int n = 1;                 // Current distance
++        return executeRequest(() -> searchInternal(object));
++    }
++
++    private void beforeRequest(final long now) {
++        if (isCircuitBreakerOpen(now)) {
++            throw new CircuitBreakerOpenException("Circuit breaker is open");
++        }
++        if (circuitOpenUntil != Long.MIN_VALUE) {
++            failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++            circuitOpenUntil = Long.MIN_VALUE;
++        }
++        if (maxRequestsPerWindow > 0) {
++            requestTimestamps = ArrayUtils.removeValuesBefore(requestTimestamps, now - requestWindowMillis + 1);
++            if (requestTimestamps.length >= maxRequestsPerWindow) {
++                throw new RequestRateLimitException("Request rate limit exceeded");
++            }
++            requestTimestamps = ArrayUtils.add(requestTimestamps, now);
++        }
++    }
++
++    private boolean isCircuitBreakerOpen(final long now) {
++        return failureThreshold > 0 && circuitOpenUntil > now;
++    }
++
++    private void onRequestFailure(final long now) {
++        if (failureThreshold <= 0) {
++            return;
++        }
++        failureTimestamps = ArrayUtils.removeValuesBefore(failureTimestamps, now - failureWindowMillis + 1);
++        failureTimestamps = ArrayUtils.add(failureTimestamps, now);
++        if (failureTimestamps.length >= failureThreshold) {
++            circuitOpenUntil = now + circuitOpenMillis;
++        }
++    }
++
++    private void onRequestSuccess() {
++        if (failureThreshold > 0) {
++            failureTimestamps = ArrayUtils.EMPTY_LONG_ARRAY;
++            circuitOpenUntil = Long.MIN_VALUE;
++        }
++    }
++
++    private E peekInternal() throws EmptyStackException {
++        final int n = size();
++        if (n <= 0) {
++            throw new EmptyStackException();
++        }
++        return super.get(n - 1);
++    }
++
++    private E peekInternal(final int n) throws EmptyStackException {
++        final int m = size() - n - 1;
++        if (m < 0) {
++            throw new EmptyStackException();
++        }
++        return super.get(m);
++    }
++
++    private E popInternal() throws EmptyStackException {
++        final int n = size();
++        if (n <= 0) {
++            throw new EmptyStackException();
++        }
++        return super.remove(n - 1);
++    }
++
++    private E pushInternal(final E item) {
++        super.add(item);
++        return item;
++    }
++
++    private int searchInternal(final Object object) {
++        int i = size() - 1;
++        int n = 1;
+         while (i >= 0) {
+-            final Object current = get(i);
++            final Object current = super.get(i);
+             if (object == null && current == null ||
+                 object != null && object.equals(current)) {
+                 return n;
+@@ -163,4 +317,10 @@ public class ArrayStack<E> extends ArrayList<E> {
+         return -1;
+     }
+ 
++    private void validatePositive(final long value, final String name) {
++        if (value <= 0) {
++            throw new IllegalArgumentException(name + " must be greater than zero");
++        }
++    }
++
+ }
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayUtils.java b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+index 8fdbab144..b8a3f8368 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayUtils.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+@@ -36,6 +36,8 @@ package org.apache.commons.collections4;
+  */
+ final class ArrayUtils {
+ 
++    static final long[] EMPTY_LONG_ARRAY = {};
++
+     /**
+      * <p>
+      * Checks if the object is in the given array.
+@@ -52,6 +54,16 @@ final class ArrayUtils {
+         return indexOf(array, objectToFind) != CollectionUtils.INDEX_NOT_FOUND;
+     }
+ 
++    static long[] add(final long[] array, final long value) {
++        final int length = array == null ? 0 : array.length;
++        final long[] newArray = new long[length + 1];
++        if (length > 0) {
++            System.arraycopy(array, 0, newArray, 0, length);
++        }
++        newArray[length] = value;
++        return newArray;
++    }
++
+     /**
+      * <p>
+      * Finds the index of the given object in the array starting at the given index.
+@@ -108,6 +120,25 @@ final class ArrayUtils {
+         return indexOf(array, objectToFind, 0);
+     }
+ 
++    static long[] removeValuesBefore(final long[] array, final long threshold) {
++        if (array == null || array.length == 0) {
++            return EMPTY_LONG_ARRAY;
++        }
++        int startIndex = 0;
++        while (startIndex < array.length && array[startIndex] < threshold) {
++            startIndex++;
++        }
++        if (startIndex == 0) {
++            return array;
++        }
++        if (startIndex == array.length) {
++            return EMPTY_LONG_ARRAY;
++        }
++        final long[] newArray = new long[array.length - startIndex];
++        System.arraycopy(array, startIndex, newArray, 0, newArray.length);
++        return newArray;
++    }
++
+     /**
+      * Don't allow instances.
+      */
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+index 360f36a80..9ca5cd677 100644
+--- a/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
++++ b/src/test/java/org/apache/commons/collections4/ArrayStackTest.java
+@@ -28,9 +28,25 @@ import org.junit.jupiter.api.Test;
+ /**
+  * Tests ArrayStack.
+  */
+-@SuppressWarnings("deprecation") // we test a deprecated class
++@SuppressWarnings("deprecation")
+ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+ 
++    private static final class TestArrayStack<T> extends ArrayStack<T> {
++
++        private static final long serialVersionUID = 1L;
++
++        private long now;
++
++        void setCurrentTimeMillis(final long currentTimeMillis) {
++            now = currentTimeMillis;
++        }
++
++        @Override
++        long currentTimeMillis() {
++            return now;
++        }
++    }
++
+     @Override
+     public String getCompatibilityVersion() {
+         return "4";
+@@ -41,6 +57,24 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+         return new ArrayStack<>();
+     }
+ 
++    @Test
++    void testCircuitBreakerOpensAfterRepeatedFailures() {
++        final TestArrayStack<String> stack = new TestArrayStack<>();
++        stack.configureCircuitBreaker(2, 1000L, 500L);
++
++        assertThrows(EmptyStackException.class, stack::pop);
++        assertFalse(stack.isCircuitBreakerOpen());
++
++        assertThrows(EmptyStackException.class, stack::pop);
++        assertTrue(stack.isCircuitBreakerOpen());
++        assertThrows(ArrayStack.CircuitBreakerOpenException.class, stack::peek);
++
++        stack.setCurrentTimeMillis(500L);
++        stack.push("recovered");
++        assertFalse(stack.isCircuitBreakerOpen());
++        assertEquals("recovered", stack.peek());
++    }
++
+     @Test
+     void testNewStack() {
+         final ArrayStack<E> stack = makeObject();
+@@ -81,6 +115,19 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+         assertEquals(0, stack.size(), "Stack size is zero");
+     }
+ 
++    @Test
++    void testRequestRateLimitBlocksExcessiveRequests() {
++        final TestArrayStack<String> stack = new TestArrayStack<>();
++        stack.configureRequestRateLimit(2, 1000L);
++
++        stack.push("first");
++        stack.push("second");
++        assertThrows(ArrayStack.RequestRateLimitException.class, stack::peek);
++
++        stack.setCurrentTimeMillis(1000L);
++        assertEquals("second", stack.peek());
++    }
++
+     @Test
+     @Override
+     @SuppressWarnings("unchecked")
+@@ -97,11 +144,4 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
+                 "Cannot find 'Missing Item'");
+     }
+ 
+-//    void testCreate() throws Exception {
+-//        resetEmpty();
+-//        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.emptyCollection.version4.obj");
+-//        resetFull();
+-//        writeExternalFormToDisk((java.io.Serializable) getCollection(), "src/test/resources/data/test/ArrayStack.fullCollection.version4.obj");
+-//    }
+-
+ }
+diff --git a/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java b/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
+index 16a88c993..27e58f88f 100644
+--- a/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
++++ b/src/test/java/org/apache/commons/collections4/ArrayUtilsTest.java
+@@ -16,6 +16,7 @@
+  */
+ package org.apache.commons.collections4;
+ 
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+@@ -24,6 +25,12 @@ import org.junit.jupiter.api.Test;
+ 
+ class ArrayUtilsTest {
+ 
++    @Test
++    void testAdd() {
++        assertArrayEquals(new long[] { 1L }, ArrayUtils.add(null, 1L));
++        assertArrayEquals(new long[] { 1L, 2L }, ArrayUtils.add(new long[] { 1L }, 2L));
++    }
++
+     @Test
+     void testContains() {
+         final Object[] array = { "0", "1", "2", "3", null, "0" };
+@@ -47,7 +54,6 @@ class ArrayUtilsTest {
+ 
+             @Override
+             public int hashCode() {
+-                // Pairs with equals()
+                 return super.hashCode();
+             }
+         }
+@@ -70,4 +76,11 @@ class ArrayUtilsTest {
+         assertEquals(4, ArrayUtils.indexOf(array, null));
+         assertEquals(-1, ArrayUtils.indexOf(array, "notInArray"));
+     }
++
++    @Test
++    void testRemoveValuesBefore() {
++        assertArrayEquals(ArrayUtils.EMPTY_LONG_ARRAY, ArrayUtils.removeValuesBefore(null, 10L));
++        assertArrayEquals(ArrayUtils.EMPTY_LONG_ARRAY, ArrayUtils.removeValuesBefore(new long[] { 1L, 2L }, 3L));
++        assertArrayEquals(new long[] { 2L, 3L }, ArrayUtils.removeValuesBefore(new long[] { 1L, 2L, 3L }, 2L));
++    }
+ }
