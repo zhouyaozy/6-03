@@ -163,4 +163,8 @@ public class ArrayStack<E> extends ArrayList<E> {
         return -1;
     }
 
+    public boolean contains(final Object object) {
+        return ArrayUtils.contains(this.toArray(), object);
+    }
+
 }

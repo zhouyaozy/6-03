@@ -108,6 +108,36 @@ final class ArrayUtils {
         return indexOf(array, objectToFind, 0);
     }
 
+    static int lastIndexOf(final Object[] array, final Object objectToFind) {
+        return lastIndexOf(array, objectToFind, Integer.MAX_VALUE);
+    }
+
+    static int lastIndexOf(final Object[] array, final Object objectToFind, int startIndex) {
+        if (array == null) {
+            return CollectionUtils.INDEX_NOT_FOUND;
+        }
+        if (startIndex < 0) {
+            return CollectionUtils.INDEX_NOT_FOUND;
+        }
+        if (startIndex >= array.length) {
+            startIndex = array.length - 1;
+        }
+        if (objectToFind == null) {
+            for (int i = startIndex; i >= 0; i--) {
+                if (array[i] == null) {
+                    return i;
+                }
+            }
+        } else {
+            for (int i = startIndex; i >= 0; i--) {
+                if (objectToFind.equals(array[i])) {
+                    return i;
+                }
+            }
+        }
+        return CollectionUtils.INDEX_NOT_FOUND;
+    }
+
     /**
      * Don't allow instances.
      */

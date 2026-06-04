@@ -1,0 +1,226 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.commons.collections4;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.EmptyStackException;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+@SuppressWarnings("deprecation")
+class ArrayStackEndToEndTest {
+
+    private ArrayStack<String> undoStack;
+
+    @BeforeEach
+    void setUp() {
+        undoStack = new ArrayStack<>();
+    }
+
+    @Test
+    void testCompleteUndoWorkflow() {
+        assertTrue(undoStack.empty());
+        assertEquals(0, undoStack.size());
+
+        undoStack.push("Edit A");
+        assertFalse(undoStack.empty());
+        assertEquals(1, undoStack.size());
+        assertTrue(undoStack.contains("Edit A"));
+
+        undoStack.push("Edit B");
+        undoStack.push("Edit C");
+        assertEquals(3, undoStack.size());
+        assertEquals("Edit C", undoStack.peek());
+        assertEquals("Edit B", undoStack.peek(1));
+        assertEquals("Edit A", undoStack.peek(2));
+
+        assertTrue(undoStack.contains("Edit B"));
+        assertFalse(undoStack.contains("Edit X"));
+
+        assertEquals(1, undoStack.search("Edit C"));
+        assertEquals(2, undoStack.search("Edit B"));
+        assertEquals(3, undoStack.search("Edit A"));
+        assertEquals(-1, undoStack.search("Edit X"));
+
+        String undone = undoStack.pop();
+        assertEquals("Edit C", undone);
+        assertEquals(2, undoStack.size());
+        assertEquals("Edit B", undoStack.peek());
+
+        undone = undoStack.pop();
+        assertEquals("Edit B", undone);
+        assertEquals(1, undoStack.size());
+        assertTrue(undoStack.contains("Edit A"));
+        assertFalse(undoStack.contains("Edit B"));
+
+        undone = undoStack.pop();
+        assertEquals("Edit A", undone);
+        assertTrue(undoStack.empty());
+        assertEquals(0, undoStack.size());
+
+        assertThrows(EmptyStackException.class, () -> undoStack.pop());
+        assertThrows(EmptyStackException.class, () -> undoStack.peek());
+    }
+
+    @Test
+    void testDuplicateElementsWorkflow() {
+        undoStack.push("Edit A");
+        undoStack.push("Edit B");
+        undoStack.push("Edit A");
+
+        assertEquals(3, undoStack.size());
+        assertTrue(undoStack.contains("Edit A"));
+        assertTrue(undoStack.contains("Edit B"));
+
+        assertEquals(1, undoStack.search("Edit A"));
+        assertEquals(2, undoStack.search("Edit B"));
+
+        Object[] array = undoStack.toArray();
+        assertEquals(0, ArrayUtils.indexOf(array, "Edit A"));
+        assertEquals(2, ArrayUtils.lastIndexOf(array, "Edit A"));
+        assertEquals(1, ArrayUtils.indexOf(array, "Edit B"));
+        assertEquals(1, ArrayUtils.lastIndexOf(array, "Edit B"));
+
+        assertEquals("Edit A", undoStack.pop());
+        assertEquals(2, undoStack.size());
+        assertEquals("Edit B", undoStack.peek());
+        assertTrue(undoStack.contains("Edit A"));
+    }
+
+    @Test
+    void testNullElementWorkflow() {
+        undoStack.push("Task 1");
+        undoStack.push(null);
+        undoStack.push("Task 3");
+
+        assertEquals(3, undoStack.size());
+        assertTrue(undoStack.contains(null));
+        assertTrue(undoStack.contains("Task 1"));
+        assertTrue(undoStack.contains("Task 3"));
+
+        assertEquals(1, undoStack.search(null));
+        assertEquals(2, undoStack.search("Task 1"));
+        assertEquals(3, undoStack.search("Task 3"));
+
+        Object[] array = undoStack.toArray();
+        assertEquals(1, ArrayUtils.indexOf(array, null));
+        assertEquals(1, ArrayUtils.lastIndexOf(array, null));
+
+        assertNull(undoStack.pop());
+        assertEquals("Task 1", undoStack.peek());
+        assertFalse(undoStack.contains(null));
+    }
+
+    @Test
+    void testPeekAtDepthWorkflow() {
+        undoStack.push("Level 0");
+        undoStack.push("Level 1");
+        undoStack.push("Level 2");
+        undoStack.push("Level 3");
+
+        assertEquals("Level 3", undoStack.peek(0));
+        assertEquals("Level 2", undoStack.peek(1));
+        assertEquals("Level 1", undoStack.peek(2));
+        assertEquals("Level 0", undoStack.peek(3));
+
+        assertThrows(EmptyStackException.class, () -> undoStack.peek(4));
+
+        while (!undoStack.empty()) {
+            undoStack.pop();
+        }
+        assertThrows(EmptyStackException.class, () -> undoStack.peek(0));
+    }
+
+    @Test
+    void testArrayUtilsIntegrationWorkflow() {
+        undoStack.push("Alpha");
+        undoStack.push("Beta");
+        undoStack.push("Gamma");
+        undoStack.push("Beta");
+
+        Object[] snapshot = undoStack.toArray();
+        assertEquals(4, snapshot.length);
+
+        assertTrue(ArrayUtils.contains(snapshot, "Alpha"));
+        assertTrue(ArrayUtils.contains(snapshot, "Beta"));
+        assertTrue(ArrayUtils.contains(snapshot, "Gamma"));
+        assertFalse(ArrayUtils.contains(snapshot, "Delta"));
+
+        assertEquals(1, ArrayUtils.indexOf(snapshot, "Beta"));
+        assertEquals(3, ArrayUtils.lastIndexOf(snapshot, "Beta"));
+
+        assertEquals(0, ArrayUtils.indexOf(snapshot, "Alpha"));
+        assertEquals(0, ArrayUtils.lastIndexOf(snapshot, "Alpha"));
+
+        undoStack.pop();
+        snapshot = undoStack.toArray();
+        assertEquals(3, snapshot.length);
+        assertEquals(1, ArrayUtils.indexOf(snapshot, "Beta"));
+        assertEquals(1, ArrayUtils.lastIndexOf(snapshot, "Beta"));
+    }
+
+    @Test
+    void testInitialCapacityWorkflow() {
+        ArrayStack<Integer> stack = new ArrayStack<>(50);
+        assertTrue(stack.empty());
+
+        for (int i = 0; i < 100; i++) {
+            stack.push(i);
+        }
+        assertEquals(100, stack.size());
+        assertEquals(99, stack.peek());
+        assertTrue(stack.contains(0));
+        assertTrue(stack.contains(99));
+        assertFalse(stack.contains(100));
+
+        Object[] array = stack.toArray();
+        assertEquals(0, ArrayUtils.indexOf(array, 0));
+        assertEquals(99, ArrayUtils.lastIndexOf(array, 99));
+
+        for (int i = 99; i >= 0; i--) {
+            assertEquals(i, stack.pop());
+        }
+        assertTrue(stack.empty());
+    }
+
+    @Test
+    void testArrayUtilsEdgeCases() {
+        assertEquals(-1, ArrayUtils.lastIndexOf(null, "any"));
+        assertEquals(-1, ArrayUtils.lastIndexOf(null, null));
+        assertEquals(-1, ArrayUtils.lastIndexOf(new Object[0], "any"));
+
+        final Object[] array = { "A", null, "B", "A", null };
+        assertEquals(3, ArrayUtils.lastIndexOf(array, "A"));
+        assertEquals(2, ArrayUtils.lastIndexOf(array, "B"));
+        assertEquals(4, ArrayUtils.lastIndexOf(array, null));
+        assertEquals(-1, ArrayUtils.lastIndexOf(array, "C"));
+
+        assertEquals(3, ArrayUtils.lastIndexOf(array, "A", 4));
+        assertEquals(0, ArrayUtils.lastIndexOf(array, "A", 2));
+        assertEquals(-1, ArrayUtils.lastIndexOf(array, "A", -1));
+        assertEquals(3, ArrayUtils.lastIndexOf(array, "A", 10));
+    }
+
+    private static void assertNull(final Object obj) {
+        assertTrue(obj == null, "Expected null but was: " + obj);
+    }
+}
