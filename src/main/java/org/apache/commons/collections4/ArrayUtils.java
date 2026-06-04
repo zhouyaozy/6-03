@@ -70,7 +70,7 @@ final class ArrayUtils {
      *         array input.
      */
     static int indexOf(final Object[] array, final Object objectToFind, int startIndex) {
-        if (array == null) {
+        if (array == null || array.length == 0) {
             return CollectionUtils.INDEX_NOT_FOUND;
         }
         if (startIndex < 0) {

@@ -1,0 +1,25 @@
+name: OWASP ZAP Integration
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  zap_scan:
+    runs-on: ubuntu-latest
+    name: Scan the application with OWASP ZAP
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: ZAP Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          # Note: ZAP is a DAST tool designed for web applications. 
+          # For a Java library like this, you would typically scan a deployed web application.
+          # Here we provide a placeholder target URL.
+          target: 'http://localhost:8080/'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'

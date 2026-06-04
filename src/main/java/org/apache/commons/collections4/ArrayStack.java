@@ -104,6 +104,9 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
+        if (n < 0) {
+            throw new IllegalArgumentException("Index cannot be negative");
+        }
         final int m = size() - n - 1;
         if (m < 0) {
             throw new EmptyStackException();

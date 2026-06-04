@@ -1,0 +1,89 @@
+diff --git a/.github/workflows/zap.yml b/.github/workflows/zap.yml
+new file mode 100644
+index 000000000..0193910b9
+--- /dev/null
++++ b/.github/workflows/zap.yml
+@@ -0,0 +1,25 @@
++name: OWASP ZAP Integration
++
++on:
++  push:
++    branches: [ master, main ]
++  pull_request:
++    branches: [ master, main ]
++
++jobs:
++  zap_scan:
++    runs-on: ubuntu-latest
++    name: Scan the application with OWASP ZAP
++    steps:
++      - name: Checkout repository
++        uses: actions/checkout@v3
++
++      - name: ZAP Scan
++        uses: zaproxy/action-baseline@v0.12.0
++        with:
++          # Note: ZAP is a DAST tool designed for web applications. 
++          # For a Java library like this, you would typically scan a deployed web application.
++          # Here we provide a placeholder target URL.
++          target: 'http://localhost:8080/'
++          rules_file_name: '.zap/rules.tsv'
++          cmd_options: '-a'
+diff --git a/23.patch b/23.patch
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/pom.xml b/pom.xml
+index 9aeb751d6..7777ddc2a 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -255,6 +255,23 @@
+           </dependency>
+         </dependencies>
+       </plugin>
++      <plugin>
++        <groupId>org.owasp</groupId>
++        <artifactId>dependency-check-maven</artifactId>
++        <version>9.0.9</version>
++        <executions>
++          <execution>
++            <goals>
++              <goal>check</goal>
++            </goals>
++          </execution>
++        </executions>
++      </plugin>
++      <plugin>
++        <groupId>net.continuous-security-tools</groupId>
++        <artifactId>zap-maven-plugin</artifactId>
++        <version>0.2.1</version>
++      </plugin>
+     </plugins>
+   </build>
+   <reporting>
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayStack.java b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+index 0640d1349..78a6804be 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayStack.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayStack.java
+@@ -104,6 +104,9 @@ public class ArrayStack<E> extends ArrayList<E> {
+      *  stack to satisfy this request
+      */
+     public E peek(final int n) throws EmptyStackException {
++        if (n < 0) {
++            throw new IllegalArgumentException("Index cannot be negative");
++        }
+         final int m = size() - n - 1;
+         if (m < 0) {
+             throw new EmptyStackException();
+diff --git a/src/main/java/org/apache/commons/collections4/ArrayUtils.java b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+index 8fdbab144..c31f01c8b 100644
+--- a/src/main/java/org/apache/commons/collections4/ArrayUtils.java
++++ b/src/main/java/org/apache/commons/collections4/ArrayUtils.java
+@@ -70,7 +70,7 @@ final class ArrayUtils {
+      *         array input.
+      */
+     static int indexOf(final Object[] array, final Object objectToFind, int startIndex) {
+-        if (array == null) {
++        if (array == null || array.length == 0) {
+             return CollectionUtils.INDEX_NOT_FOUND;
+         }
+         if (startIndex < 0) {

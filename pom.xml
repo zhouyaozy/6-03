@@ -255,6 +255,23 @@
           </dependency>
         </dependencies>
       </plugin>
+      <plugin>
+        <groupId>org.owasp</groupId>
+        <artifactId>dependency-check-maven</artifactId>
+        <version>9.0.9</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>check</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>net.continuous-security-tools</groupId>
+        <artifactId>zap-maven-plugin</artifactId>
+        <version>0.2.1</version>
+      </plugin>
     </plugins>
   </build>
   <reporting>
