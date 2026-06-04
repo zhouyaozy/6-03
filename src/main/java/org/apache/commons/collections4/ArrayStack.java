@@ -17,14 +17,21 @@
 package org.apache.commons.collections4;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.EmptyStackException;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 /**
  * An implementation of the {@link java.util.Stack} API that is based on an
- * {@code ArrayList} instead of a {@code Vector}, so it is not
- * synchronized to protect against multithreaded access.  The implementation
- * is therefore operates faster in environments where you do not need to
- * worry about multiple thread contention.
+ * {@code ArrayList} instead of a {@code Vector}. By default, access is
+ * serialized with a local reentrant lock, and callers may supply a custom lock
+ * implementation to coordinate stack operations across processes.
  * <p>
  * The removal order of an {@code ArrayStack} is based on insertion
  * order: The most recently added element is removed first.  The iteration
@@ -46,14 +53,59 @@ import java.util.EmptyStackException;
 @Deprecated
 public class ArrayStack<E> extends ArrayList<E> {
 
+    /**
+     * Acquires the lock that protects stack operations.
+     */
+    @FunctionalInterface
+    public interface DistributedLock {
+
+        /**
+         * Acquires the lock and returns a handle that releases it.
+         *
+         * @return the acquired lock handle
+         */
+        LockHandle lock();
+    }
+
+    /**
+     * Releases a previously acquired lock.
+     */
+    @FunctionalInterface
+    public interface LockHandle {
+
+        /**
+         * Releases the lock.
+         */
+        void unlock();
+    }
+
+    @FunctionalInterface
+    interface LockAcquireAction {
+
+        LockHandle lock();
+    }
+
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
+
+    private transient DistributedLock distributedLock;
+    private transient ThreadLocal<Integer> lockDepth;
+    private transient ReentrantLock localLock;
 
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
      * is controlled by {@code ArrayList} and is currently 10.
      */
     public ArrayStack() {
+    }
+
+    /**
+     * Constructs a new empty {@code ArrayStack} that uses the supplied lock.
+     *
+     * @param distributedLock the lock used to serialize stack operations
+     */
+    public ArrayStack(final DistributedLock distributedLock) {
+        setDistributedLock(distributedLock);
     }
 
     /**
@@ -68,99 +120,282 @@ public class ArrayStack<E> extends ArrayList<E> {
     }
 
     /**
-     * Return {@code true} if this stack is currently empty.
-     * <p>
-     * This method exists for compatibility with {@link java.util.Stack}.
-     * New users of this class should use {@code isEmpty} instead.
-     * </p>
+     * Constructs a new empty {@code ArrayStack} with an initial size and lock.
      *
-     * @return true if the stack is currently empty
+     * @param initialSize the initial size to use
+     * @param distributedLock the lock used to serialize stack operations
      */
+    public ArrayStack(final int initialSize, final DistributedLock distributedLock) {
+        super(initialSize);
+        setDistributedLock(distributedLock);
+    }
+
+    @Override
+    public boolean add(final E object) {
+        return withLock(() -> super.add(object));
+    }
+
+    @Override
+    public void add(final int index, final E element) {
+        withLock(() -> super.add(index, element));
+    }
+
+    @Override
+    public boolean addAll(final Collection<? extends E> collection) {
+        return withLock(() -> super.addAll(collection));
+    }
+
+    @Override
+    public boolean addAll(final int index, final Collection<? extends E> collection) {
+        return withLock(() -> super.addAll(index, collection));
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Object clone() {
+        return withLock(() -> {
+            final ArrayStack<E> clone = (ArrayStack<E>) super.clone();
+            clone.distributedLock = distributedLock;
+            clone.lockDepth = null;
+            clone.localLock = null;
+            return clone;
+        });
+    }
+
+    @Override
+    public void clear() {
+        withLock(super::clear);
+    }
+
+    @Override
+    public boolean contains(final Object object) {
+        return withLock(() -> super.contains(object));
+    }
+
+    @Override
+    public boolean containsAll(final Collection<?> collection) {
+        return withLock(() -> super.containsAll(collection));
+    }
+
     public boolean empty() {
-        return isEmpty();
+        return withLock(super::isEmpty);
     }
 
-    /**
-     * Returns the top item off of this stack without removing it.
-     *
-     * @return the top item on the stack
-     * @throws EmptyStackException  if the stack is empty
-     */
+    @Override
+    public void ensureCapacity(final int minCapacity) {
+        withLock(() -> super.ensureCapacity(minCapacity));
+    }
+
+    public <R> R executeLocked(final Function<? super ArrayStack<E>, R> action) {
+        return withLock(() -> ArrayUtils.requireNonNull(action, "action").apply(this));
+    }
+
+    public void executeLocked(final Consumer<? super ArrayStack<E>> action) {
+        withLock(() -> ArrayUtils.requireNonNull(action, "action").accept(this));
+    }
+
+    @Override
+    public void forEach(final Consumer<? super E> action) {
+        withLock(() -> super.forEach(action));
+    }
+
+    @Override
+    public E get(final int index) {
+        return withLock(() -> super.get(index));
+    }
+
+    @Override
+    public int indexOf(final Object object) {
+        return withLock(() -> super.indexOf(object));
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return withLock(super::isEmpty);
+    }
+
+    @Override
+    public int lastIndexOf(final Object object) {
+        return withLock(() -> super.lastIndexOf(object));
+    }
+
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return get(n - 1);
+        return withLock(() -> {
+            final int size = super.size();
+            if (size <= 0) {
+                throw new EmptyStackException();
+            }
+            return super.get(size - 1);
+        });
     }
 
-    /**
-     * Returns the n'th item down (zero-relative) from the top of this
-     * stack without removing it.
-     *
-     * @param n  the number of items down to go
-     * @return the n'th item on the stack, zero relative
-     * @throws EmptyStackException  if there are not enough items on the
-     *  stack to satisfy this request
-     */
     public E peek(final int n) throws EmptyStackException {
-        final int m = size() - n - 1;
-        if (m < 0) {
-            throw new EmptyStackException();
-        }
-        return get(m);
+        return withLock(() -> {
+            final int index = super.size() - n - 1;
+            if (index < 0) {
+                throw new EmptyStackException();
+            }
+            return super.get(index);
+        });
     }
 
-    /**
-     * Pops the top item off of this stack and return it.
-     *
-     * @return the top item on the stack
-     * @throws EmptyStackException  if the stack is empty
-     */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return remove(n - 1);
+        return withLock(() -> {
+            final int size = super.size();
+            if (size <= 0) {
+                throw new EmptyStackException();
+            }
+            return super.remove(size - 1);
+        });
     }
 
-    /**
-     * Pushes a new item onto the top of this stack. The pushed item is also
-     * returned. This is equivalent to calling {@code add}.
-     *
-     * @param item  the item to be added
-     * @return the item just pushed
-     */
     public E push(final E item) {
-        add(item);
+        withLock(() -> super.add(item));
         return item;
     }
 
-    /**
-     * Returns the one-based position of the distance from the top that the
-     * specified object exists on this stack, where the top-most element is
-     * considered to be at distance {@code 1}.  If the object is not
-     * present on the stack, return {@code -1} instead.  The
-     * {@code equals()} method is used to compare to the items
-     * in this stack.
-     *
-     * @param object  the object to be searched for
-     * @return the 1-based depth into the stack of the object, or -1 if not found
-     */
+    @Override
+    public E remove(final int index) {
+        return withLock(() -> super.remove(index));
+    }
+
+    @Override
+    public boolean remove(final Object object) {
+        return withLock(() -> super.remove(object));
+    }
+
+    @Override
+    public boolean removeAll(final Collection<?> collection) {
+        return withLock(() -> super.removeAll(collection));
+    }
+
+    @Override
+    public boolean removeIf(final Predicate<? super E> filter) {
+        return withLock(() -> super.removeIf(filter));
+    }
+
+    @Override
+    public void replaceAll(final UnaryOperator<E> operator) {
+        withLock(() -> super.replaceAll(operator));
+    }
+
+    @Override
+    public boolean retainAll(final Collection<?> collection) {
+        return withLock(() -> super.retainAll(collection));
+    }
+
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
-        while (i >= 0) {
-            final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
-                return n;
+        return withLock(() -> {
+            int i = super.size() - 1;
+            int distance = 1;
+            while (i >= 0) {
+                final Object current = super.get(i);
+                if (object == null && current == null || object != null && object.equals(current)) {
+                    return distance;
+                }
+                i--;
+                distance++;
             }
-            i--;
-            n++;
+            return -1;
+        });
+    }
+
+    @Override
+    public E set(final int index, final E element) {
+        return withLock(() -> super.set(index, element));
+    }
+
+    public void setDistributedLock(final DistributedLock distributedLock) {
+        this.distributedLock = ArrayUtils.requireNonNull(distributedLock, "distributedLock");
+    }
+
+    @Override
+    public int size() {
+        return withLock(super::size);
+    }
+
+    @Override
+    public void sort(final Comparator<? super E> comparator) {
+        withLock(() -> super.sort(comparator));
+    }
+
+    @Override
+    public Object[] toArray() {
+        return withLock(() -> super.toArray());
+    }
+
+    @Override
+    public <T> T[] toArray(final T[] array) {
+        return withLock(() -> super.toArray(array));
+    }
+
+    @Override
+    public void trimToSize() {
+        withLock(super::trimToSize);
+    }
+
+    public void useLocalLock() {
+        distributedLock = null;
+    }
+
+    private LockHandle acquireLock() {
+        final ThreadLocal<Integer> depth = lockDepth();
+        final Integer currentDepth = depth.get();
+        if (currentDepth != null) {
+            depth.set(currentDepth + 1);
+            return this::releaseNestedLock;
         }
-        return -1;
+        final LockHandle lockHandle = ArrayUtils.requireNonNull(distributedLock().lock(), "lockHandle");
+        depth.set(1);
+        return () -> releaseOuterLock(lockHandle);
+    }
+
+    private DistributedLock distributedLock() {
+        if (distributedLock == null) {
+            distributedLock = () -> {
+                final ReentrantLock lock = localLock();
+                lock.lock();
+                return ArrayUtils.asLockHandle(lock);
+            };
+        }
+        return distributedLock;
+    }
+
+    private ReentrantLock localLock() {
+        if (localLock == null) {
+            localLock = new ReentrantLock();
+        }
+        return localLock;
+    }
+
+    private ThreadLocal<Integer> lockDepth() {
+        if (lockDepth == null) {
+            lockDepth = new ThreadLocal<>();
+        }
+        return lockDepth;
+    }
+
+    private void releaseNestedLock() {
+        final ThreadLocal<Integer> depth = lockDepth();
+        final int nextDepth = depth.get() - 1;
+        if (nextDepth == 0) {
+            depth.remove();
+        } else {
+            depth.set(nextDepth);
+        }
+    }
+
+    private void releaseOuterLock(final LockHandle lockHandle) {
+        releaseNestedLock();
+        lockHandle.unlock();
+    }
+
+    private <T> T withLock(final Supplier<T> supplier) {
+        return ArrayUtils.withLock(this::acquireLock, supplier);
+    }
+
+    private void withLock(final Runnable runnable) {
+        ArrayUtils.withLock(this::acquireLock, runnable);
     }
 
 }

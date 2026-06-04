@@ -18,11 +18,28 @@ package org.apache.commons.collections4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.junit.jupiter.api.Test;
 
+@SuppressWarnings("deprecation")
 class ArrayUtilsTest {
+
+    @Test
+    void testAsLockHandle() {
+        final ReentrantLock lock = new ReentrantLock();
+        final ArrayStack.LockHandle lockHandle;
+
+        lock.lock();
+        lockHandle = ArrayUtils.asLockHandle(lock);
+        lockHandle.unlock();
+
+        assertFalse(lock.isLocked());
+    }
 
     @Test
     void testContains() {
@@ -47,7 +64,6 @@ class ArrayUtilsTest {
 
             @Override
             public int hashCode() {
-                // Pairs with equals()
                 return super.hashCode();
             }
         }
@@ -60,8 +76,8 @@ class ArrayUtilsTest {
     @Test
     void testIndexOf() {
         final Object[] array = { "0", "1", "2", "3", null, "0" };
-        assertEquals(-1, ArrayUtils.indexOf(null, null));
-        assertEquals(-1, ArrayUtils.indexOf(null, "0"));
+        assertEquals(-1, ArrayUtils.indexOf((Object[]) null, null));
+        assertEquals(-1, ArrayUtils.indexOf((Object[]) null, "0"));
         assertEquals(-1, ArrayUtils.indexOf(new Object[0], "0"));
         assertEquals(0, ArrayUtils.indexOf(array, "0"));
         assertEquals(1, ArrayUtils.indexOf(array, "1"));
@@ -69,5 +85,23 @@ class ArrayUtilsTest {
         assertEquals(3, ArrayUtils.indexOf(array, "3"));
         assertEquals(4, ArrayUtils.indexOf(array, null));
         assertEquals(-1, ArrayUtils.indexOf(array, "notInArray"));
+    }
+
+    @Test
+    void testRequireNonNull() {
+        assertEquals("value", ArrayUtils.requireNonNull("value", "name"));
+        assertThrows(NullPointerException.class, () -> ArrayUtils.requireNonNull(null, "name"));
+    }
+
+    @Test
+    void testWithLockUnlocksOnFailure() {
+        final AtomicInteger unlockCount = new AtomicInteger();
+
+        assertThrows(IllegalStateException.class,
+                () -> ArrayUtils.withLock(() -> unlockCount::incrementAndGet, () -> {
+                    throw new IllegalStateException("boom");
+                }));
+
+        assertEquals(1, unlockCount.get());
     }
 }

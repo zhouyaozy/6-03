@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.EmptyStackException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
@@ -39,6 +40,29 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
     @Override
     public ArrayStack<E> makeObject() {
         return new ArrayStack<>();
+    }
+
+    @Test
+    void testDistributedLockCoordinatesNestedOperations() {
+        final AtomicInteger lockCount = new AtomicInteger();
+        final AtomicInteger unlockCount = new AtomicInteger();
+        final ArrayStack<String> stack = new ArrayStack<>(() -> {
+            lockCount.incrementAndGet();
+            return unlockCount::incrementAndGet;
+        });
+
+        stack.executeLocked(lockedStack -> {
+            lockedStack.push("First Item");
+            lockedStack.push("Second Item");
+            assertEquals("Second Item", lockedStack.peek());
+            assertEquals("Second Item", lockedStack.pop());
+            assertEquals("First Item", lockedStack.pop());
+            return null;
+        });
+
+        assertTrue(stack.empty(), "Stack is empty after nested operations");
+        assertEquals(1, lockCount.get(), "Only the outer lock acquisition is used");
+        assertEquals(1, unlockCount.get(), "Only the outer lock release is used");
     }
 
     @Test
@@ -95,6 +119,25 @@ public class ArrayStackTest<E> extends AbstractArrayListTest<E> {
                 "Next Item is 'First Item'");
         assertEquals(-1, stack.search("Missing Item"),
                 "Cannot find 'Missing Item'");
+    }
+
+    @Test
+    void testUseLocalLockStopsUsingCustomLock() {
+        final AtomicInteger lockCount = new AtomicInteger();
+        final ArrayStack<String> stack = new ArrayStack<>(() -> {
+            lockCount.incrementAndGet();
+            return () -> {
+            };
+        });
+
+        stack.push("before");
+        assertEquals(1, lockCount.get(), "Custom lock is used before switching");
+
+        stack.useLocalLock();
+        stack.push("after");
+
+        assertEquals(1, lockCount.get(), "Custom lock is no longer used after switching to local lock");
+        assertEquals("after", stack.pop(), "Local lock still protects regular stack operations");
     }
 
 //    void testCreate() throws Exception {
