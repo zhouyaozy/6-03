@@ -18,6 +18,7 @@ package org.apache.commons.collections4;
 
 import java.util.ArrayList;
 import java.util.EmptyStackException;
+import java.util.concurrent.locks.Lock;
 
 /**
  * An implementation of the {@link java.util.Stack} API that is based on an
@@ -49,6 +50,18 @@ public class ArrayStack<E> extends ArrayList<E> {
     /** Ensure serialization compatibility */
     private static final long serialVersionUID = 2130079159931574599L;
 
+    /** Distributed lock for thread-safe operations in high concurrency scenarios */
+    private transient Lock distributedLock;
+
+    /**
+     * Sets the distributed lock to be used by this stack.
+     *
+     * @param lock the distributed lock implementation
+     */
+    public void setDistributedLock(final Lock lock) {
+        this.distributedLock = lock;
+    }
+
     /**
      * Constructs a new empty {@code ArrayStack}. The initial size
      * is controlled by {@code ArrayList} and is currently 10.
@@ -77,7 +90,7 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return true if the stack is currently empty
      */
     public boolean empty() {
-        return isEmpty();
+        return ArrayUtils.executeWithLock(distributedLock, this::isEmpty);
     }
 
     /**
@@ -87,11 +100,13 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E peek() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return get(n - 1);
+        return ArrayUtils.executeWithLock(distributedLock, () -> {
+            final int n = size();
+            if (n <= 0) {
+                throw new EmptyStackException();
+            }
+            return get(n - 1);
+        });
     }
 
     /**
@@ -104,11 +119,13 @@ public class ArrayStack<E> extends ArrayList<E> {
      *  stack to satisfy this request
      */
     public E peek(final int n) throws EmptyStackException {
-        final int m = size() - n - 1;
-        if (m < 0) {
-            throw new EmptyStackException();
-        }
-        return get(m);
+        return ArrayUtils.executeWithLock(distributedLock, () -> {
+            final int m = size() - n - 1;
+            if (m < 0) {
+                throw new EmptyStackException();
+            }
+            return get(m);
+        });
     }
 
     /**
@@ -118,11 +135,13 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @throws EmptyStackException  if the stack is empty
      */
     public E pop() throws EmptyStackException {
-        final int n = size();
-        if (n <= 0) {
-            throw new EmptyStackException();
-        }
-        return remove(n - 1);
+        return ArrayUtils.executeWithLock(distributedLock, () -> {
+            final int n = size();
+            if (n <= 0) {
+                throw new EmptyStackException();
+            }
+            return remove(n - 1);
+        });
     }
 
     /**
@@ -133,8 +152,10 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the item just pushed
      */
     public E push(final E item) {
-        add(item);
-        return item;
+        return ArrayUtils.executeWithLock(distributedLock, () -> {
+            add(item);
+            return item;
+        });
     }
 
     /**
@@ -149,18 +170,20 @@ public class ArrayStack<E> extends ArrayList<E> {
      * @return the 1-based depth into the stack of the object, or -1 if not found
      */
     public int search(final Object object) {
-        int i = size() - 1;        // Current index
-        int n = 1;                 // Current distance
-        while (i >= 0) {
-            final Object current = get(i);
-            if (object == null && current == null ||
-                object != null && object.equals(current)) {
-                return n;
+        return ArrayUtils.executeWithLock(distributedLock, () -> {
+            int i = size() - 1;        // Current index
+            int n = 1;                 // Current distance
+            while (i >= 0) {
+                final Object current = get(i);
+                if (object == null && current == null ||
+                    object != null && object.equals(current)) {
+                    return n;
+                }
+                i--;
+                n++;
             }
-            i--;
-            n++;
-        }
-        return -1;
+            return -1;
+        });
     }
 
 }

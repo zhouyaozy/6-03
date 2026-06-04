@@ -17,6 +17,9 @@
 
 package org.apache.commons.collections4;
 
+import java.util.concurrent.locks.Lock;
+import java.util.function.Supplier;
+
 /**
  * <p>
  * Operations on arrays, primitive arrays (like {@code int[]}) and primitive wrapper arrays (like {@code Integer[]}).
@@ -106,6 +109,45 @@ final class ArrayUtils {
      */
     static <T> int indexOf(final T[] array, final Object objectToFind) {
         return indexOf(array, objectToFind, 0);
+    }
+
+    /**
+     * Executes a supplier with the given distributed lock.
+     *
+     * @param lock the distributed lock
+     * @param supplier the supplier to execute
+     * @param <T> the return type
+     * @return the result of the supplier
+     */
+    static <T> T executeWithLock(final Lock lock, final Supplier<T> supplier) {
+        if (lock != null) {
+            lock.lock();
+            try {
+                return supplier.get();
+            } finally {
+                lock.unlock();
+            }
+        }
+        return supplier.get();
+    }
+
+    /**
+     * Executes a runnable with the given distributed lock.
+     *
+     * @param lock the distributed lock
+     * @param runnable the runnable to execute
+     */
+    static void executeWithLock(final Lock lock, final Runnable runnable) {
+        if (lock != null) {
+            lock.lock();
+            try {
+                runnable.run();
+            } finally {
+                lock.unlock();
+            }
+        } else {
+            runnable.run();
+        }
     }
 
     /**
